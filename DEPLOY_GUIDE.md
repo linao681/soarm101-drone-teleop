@@ -1,19 +1,17 @@
-# SO-ARM101 Pro 新电脑完整部署指南
+# SO-ARM101 Pro 新电脑部署指南
 
 > Ubuntu 22.04 x86 + NVIDIA GPU ｜ 仓库：[github.com/linao681/soarm-101](https://github.com/linao681/soarm-101)
 
 ---
 
-## 一、系统基础
+## 1. 系统更新
 
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y build-essential git curl wget
 ```
 
----
-
-## 二、NVIDIA 驱动
+## 2. NVIDIA 驱动
 
 ```bash
 ubuntu-drivers devices
@@ -27,60 +25,44 @@ sudo reboot
 nvidia-smi
 ```
 
----
-
-## 三、Miniforge + Conda 环境
+## 3. Miniforge + Conda 环境
 
 ```bash
 cd ~
 wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
 chmod +x Miniforge3-Linux-x86_64.sh
 ./Miniforge3-Linux-x86_64.sh
-# 安装过程一路回车 + yes
+# 一路回车 + yes
 
 source ~/.bashrc
 conda create -y -n lerobot python=3.10
 conda activate lerobot
 ```
 
----
-
-## 四、SSH Key（免密连接 GitHub）
+## 4. SSH Key（免密 GitHub）
 
 ```bash
 ssh-keygen -t ed25519 -C "2796645002@qq.com"
-# 一路回车
-
 cat ~/.ssh/id_ed25519.pub
 ```
 
-复制输出的公钥 → 打开 [github.com/settings/keys](https://github.com/settings/keys) → **New SSH Key** → 粘贴保存。
-
-验证：
+复制公钥 → [github.com/settings/keys](https://github.com/settings/keys) → New SSH Key → 粘贴保存。
 
 ```bash
 ssh -T git@github.com
-# 显示 "Hi linao681!" 即成功
+# Hi linao681! ✓
 ```
 
-> **跳过 SSH**：如果不想配置 SSH，克隆时用 HTTPS：
-> ```bash
-> git clone https://github.com/linao681/soarm-101.git lerobot
-> ```
+> 不想配 SSH 就用 HTTPS：`git clone https://github.com/linao681/soarm-101.git`
 
----
-
-## 五、克隆项目 & 安装
+## 5. 克隆 & 安装
 
 ```bash
 cd ~
 git clone git@github.com:linao681/soarm-101.git lerobot
 cd ~/lerobot
 
-# 安装 ffmpeg
 conda install -y ffmpeg -c conda-forge
-
-# 安装 LeRobot + feetech 电机驱动
 pip install -e ".[feetech]"
 ```
 
@@ -88,59 +70,36 @@ pip install -e ".[feetech]"
 
 ```bash
 python -c "import torch; print('CUDA:', torch.cuda.is_available())"
-python -c "import lerobot; print('LeRobot OK')"
+python -c "import lerobot; print('OK')"
 ```
 
----
+## 6. 硬件接线
 
-## 六、硬件接线
-
-### 电源说明
-
-| 臂 | 电源电压 | 电机型号 |
+| | 电源 | 电机 |
 |---|---|---|
-| **Leader** | **5V** | C001 / C044 / C046 |
-| **Follower** | **12V** | C018 / C047 |
+| Leader | **5V** | C001 / C044 / C046 |
+| Follower | **12V** | C018 / C047 |
 
-> ⚠️ **Follower 臂必须使用 12V 电源，接错会烧毁电机！**
+> Follower 必须 12V！
 
-### 接线顺序
+电机 1→2→3→4→5→6 用 3-pin 线级联 → 控制板 → USB-C 电脑 → **最后接电源**。
 
-1. 舵机通过 3-pin 线级联（电机 1 → 电机 2 → ... → 电机 6）
-2. 第一个电机连接到控制板
-3. 控制板通过 USB-C 连接电脑
-4. **最后**接上电源
-
----
-
-## 七、电机校准
-
-### 7.1 查找 USB 端口
+## 7. 电机校准
 
 ```bash
-# 先只连接 Follower 臂的 USB
-lerobot-find-port
-# 按提示：拔掉 USB → 回车 → 插上 USB → 回车
-# 记录端口，如 /dev/ttyACM0
+# 先只连 Follower，找端口
+lerobot-find-port   # 记录 /dev/ttyACM0
 
-# 再只连接 Leader 臂的 USB
-lerobot-find-port
-# 记录端口，如 /dev/ttyACM1
+# 再只连 Leader，找端口
+lerobot-find-port   # 记录 /dev/ttyACM1
+
+# 权限
+sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1
 ```
 
-### 7.2 设置 USB 权限
+校准 Follower：
 
 ```bash
-sudo chmod 666 /dev/ttyACM0
-sudo chmod 666 /dev/ttyACM1
-```
-
-> 每次重新插拔 USB 都需要重新执行。或者创建 udev 规则一劳永逸。
-
-### 7.3 校准 Follower 臂
-
-```bash
-# 只连接 Follower 臂 USB
 python -m lerobot.scripts.lerobot_calibrate \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
@@ -148,115 +107,57 @@ python -m lerobot.scripts.lerobot_calibrate \
     --robot.calibration_dir=./cali/
 ```
 
-按提示逐个连接电机，脚本自动分配 ID：
-
-| 关节 | ID | 说明 |
-|---|---|---|
-| 夹爪 (gripper) | 6 | 末端夹持器 |
-| 手腕旋转 (wrist_roll) | 5 | |
-| 手腕俯仰 (wrist_pitch) | 4 | |
-| 肘部 (elbow) | 3 | |
-| 肩部 (shoulder) | 2 | |
-| 底座旋转 (base_roll) | 1 | |
-
-### 7.4 校准 Leader 臂
+校准 Leader：
 
 ```bash
-# 只连接 Leader 臂 USB
 python -m lerobot.scripts.lerobot_calibrate \
-    --teleop.type=so100_leader \
+    --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM1 \
     --teleop.id=blue \
     --teleop.calibration_dir=./cali/
 ```
 
----
-
-## 八、摄像头配置
+## 8. 摄像头
 
 ```bash
-# 查找可用摄像头
 lerobot-find-cameras
-
-# 记录输出中外景摄像头和腕部摄像头的 index
-# 通常 外景=0, 腕部=2
+# 记录外景和腕部摄像头 index
 ```
 
----
-
-## 九、遥操作测试
-
-同时连接 Leader、Follower 和摄像头后：
+## 9. 遥操作测试
 
 ```bash
-python -m lerobot.scripts.lerobot_teleoperate \
+lerobot-teleoperate \
     --robot.type=so101_follower \
     --robot.port=/dev/ttyACM0 \
-    --robot.cameras="{ out: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 25}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 25}}" \
     --robot.id=white \
-    --teleop.type=so100_leader \
+    --teleop.type=so101_leader \
     --teleop.port=/dev/ttyACM1 \
     --teleop.id=blue \
-    --display_data=true \
     --robot.calibration_dir=./cali/ \
     --teleop.calibration_dir=./cali/
 ```
 
-**预期结果**：移动 Leader 臂 → Follower 臂同步跟随。
+Leader 动 → Follower 跟 ✅
 
 ---
 
-## 十、保存校准文件到 GitHub
-
-做完校准后，把校准文件提交到仓库，以后换电脑无需重新校准：
-
-```bash
-git add cali/
-git commit -m "Add calibration files"
-git push
-```
-
----
-
-## 完整流程图
+## 流程图
 
 ```
-系统更新
-  └→ NVIDIA 驱动安装 → 重启
-      └→ Miniforge 安装 → 创建 lerobot 环境
-          └→ SSH Key 配置 → git clone
-              └→ pip install
-                  └→ 硬件接线（电源！）
-                      └→ 查找 USB 端口
-                          └→ 校准 Follower
-                              └→ 校准 Leader
-                                  └→ 查找摄像头
-                                      └→ 遥操作测试 ✅
-                                          └→ push 校准文件
+系统更新 → 驱动 → 重启 → Miniforge → conda 环境
+→ SSH Key → git clone → pip install → 接线
+→ 找端口 → 校准 Follower → 校准 Leader → 摄像头 → 遥操作
 ```
 
----
+## 常见问题
 
-## 常见问题速查
-
-| 现象 | 原因 | 解决 |
-|---|---|---|
-| `nvidia-smi` 找不到 | 驱动未安装或未重启 | `sudo apt install -y nvidia-driver-550 && sudo reboot` |
-| `torch.cuda.is_available()` 返回 False | PyTorch 版本不匹配 | `pip install torch --force-reinstall` |
-| 找不到 `/dev/ttyACM*` | USB 没插或没供电 | 检查 USB 连接和电源 |
-| `Permission denied` 端口 | 权限不足 | `sudo chmod 666 /dev/ttyACM*` |
-| `git clone` 失败 | SSH Key 未配置 | 配置 SSH Key 或改用 HTTPS 地址 |
-| 舵机完全不转 | 电源电压不对 | Follower 必须 12V，检查电源 |
-| 舵机抖动/异响 | 校准不准确 | 重新执行校准步骤 |
-| 遥操作无同步 | 端口或 ID 不对 | 检查 `--robot.port` 和 `--teleop.port` 是否正确 |
-| `conda` 命令不存在 | Miniforge 未初始化 | `source ~/.bashrc` 或重新打开终端 |
-
----
-
-## 关键提醒
-
-1. **Follower 臂必须 12V 供电**，Leader 臂 5V，不可混用
-2. Python 版本必须是 **3.10**，3.12 有兼容性问题
-3. 安装命令是 `pip install -e ".[feetech]"`，**不要漏掉引号和方括号**
-4. 校准完记得 `git push`，换电脑直接 clone 就有校准数据
-5. 官方参考文档：[wiki.seeedstudio.com/cn/lerobot_so100m_new](https://wiki.seeedstudio.com/cn/lerobot_so100m_new/)
+| 现象 | 解决 |
+|---|---|
+| `nvidia-smi` 失败 | 驱动没装或没重启 |
+| CUDA False | `pip install torch --force-reinstall` |
+| 无 `/dev/ttyACM*` | USB 没插或没供电 |
+| 权限拒绝 | `sudo chmod 666 /dev/ttyACM*` |
+| 舵机不动 | 检查电源，Follower 必须 12V |
+| 电机缺失 | 3-pin 线松了，检查级联 |
+| 机械臂抖动 | 重新校准 |
