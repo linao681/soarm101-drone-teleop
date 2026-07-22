@@ -163,6 +163,18 @@ wandb/
 # Dev scripts
 .dev/
 
+# PlatformIO build output
+**/.pio/
+**/*.bak
+
+# Local wireless credentials
+firmware/xiao_soarm/src/wifi_config.h
+
+# Superseded local calibration snapshots
+cali/blue.json
+cali/follower_new.json
+cali/so101_main.json
+
 # Data folders
 data/
 outputs/

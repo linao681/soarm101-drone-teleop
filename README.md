@@ -1,3 +1,49 @@
+<h1>SO-ARM101 Drone Teleoperation</h1>
+
+本仓库记录一个面向比赛演示的无人机搭载 SO-ARM101 机械臂无线遥操作项目。
+主臂通过 LeRobot 连接 Ubuntu 电脑，从臂使用 XIAO ESP32-C3 总线舵机适配板，
+通过 micro-ROS WiFi UDP 接收控制。后续计划将从臂倒挂安装到无人机下方。
+
+## 项目组成
+
+- `tools/wireless_teleoperate.py`：LeRobot 主臂到无线从臂的 ROS2 桥接程序。
+- `start_soarm_demo.sh`：检查网络、启动 micro-ROS agent 并启动遥操的一键脚本。
+- `firmware/xiao_soarm/`：XIAO ESP32-C3 从臂固件及 PlatformIO 工程。
+- `cali/`：当前主臂和从臂校准文件。
+- `docs/soarm_project_progress_2026-07-22.md`：项目进度和实验记录。
+
+## 快速启动
+
+先在 `firmware/xiao_soarm/src/` 中复制 `wifi_config.example.h` 为
+`wifi_config.h`，填入本地 2.4 GHz WiFi、电脑 IP 和密码。`wifi_config.h` 已被
+Git 忽略，不应提交到公开仓库。
+
+如果 LeRobot 使用的 Python 不在默认路径，可通过 `SOARM_PYTHON` 指定解释器：
+
+```bash
+export SOARM_PYTHON=/path/to/lerobot/bin/python
+```
+
+连接主臂普通 USB 舵机驱动板、给无线从臂接通外部舵机电源，并在电脑上运行：
+
+```bash
+./start_soarm_demo.sh
+```
+
+只进行环境检查：
+
+```bash
+./start_soarm_demo.sh --check
+```
+
+## 说明
+
+本仓库包含 Hugging Face LeRobot 代码及本项目的实验性硬件适配代码。
+LeRobot 原项目的许可证和版权说明仍然适用；项目新增代码用于 SO-ARM101
+主从遥操演示。
+
+---
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>
