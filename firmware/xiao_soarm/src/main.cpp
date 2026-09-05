@@ -5,17 +5,19 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 #include <sensor_msgs/msg/joint_state.h>
+#include <std_msgs/msg/int32_multi_array.h>
 
 #include "wifi_config.h"
+#include "control_logic.h"
 #include "servo_bus.h"
 
 extern "C" void arduino_wifi_transport_dump_trace();
 
 const uint16_t AGENT_PORT = 8888;
-const unsigned long COMMAND_TIMEOUT_MS = 500;
 const unsigned long WIFI_RESTART_TIMEOUT_MS = 10000;
 
 rcl_publisher_t state_pub;
+rcl_publisher_t status_pub;
 rcl_subscription_t command_sub;
 rclc_executor_t executor;
 rclc_support_t support;
@@ -23,27 +25,25 @@ rcl_allocator_t allocator;
 rcl_node_t node;
 sensor_msgs__msg__JointState state_msg;
 sensor_msgs__msg__JointState command_msg;
+std_msgs__msg__Int32MultiArray status_msg;
 rosidl_runtime_c__String joint_names[6];
 rosidl_runtime_c__String command_names[6];
 char command_name_buffers[6][32];
-char command_frame_id[1] = {'\0'};
+char command_frame_id[32] = {'\0'};
+int32_t status_data[14] = {0};
 double pos_data[6] = {0};
 double command_pos_data[6] = {0};
-double target_pos_data[6] = {0};
 volatile uint32_t publish_count = 0;
 volatile rcl_ret_t last_publish_rc = RCL_RET_OK;
+volatile rcl_ret_t last_status_rc = RCL_RET_OK;
 volatile uint32_t command_count = 0;
 volatile uint32_t invalid_command_count = 0;
 volatile uint32_t spin_error_count = 0;
 volatile unsigned long last_command_ms = 0;
-volatile bool command_fresh = false;
-volatile uint32_t command_timeout_count = 0;
+volatile int32_t last_reject_reason_code = control_logic::NONE;
 bool servo_calibration_ok = false;
-volatile uint32_t command_generation = 0;
-uint32_t processed_command_generation = 0;
-uint32_t control_reject_count = 0;
-bool servo_control_armed = false;
-double last_applied_target[6] = {0};
+bool pending_arm_request = false;
+control_logic::Controller controller;
 
 void initialize_joint_messages() {
     const char* names[6] = {
@@ -77,6 +77,62 @@ void initialize_joint_messages() {
     command_msg.position.data = command_pos_data;
     command_msg.position.size = 0;
     command_msg.position.capacity = 6;
+
+    status_msg.data.data = status_data;
+    status_msg.data.size = 14;
+    status_msg.data.capacity = 14;
+}
+
+bool parse_hex_digit(char value, uint8_t* digit) {
+    if (value >= '0' && value <= '9') {
+        *digit = static_cast<uint8_t>(value - '0');
+        return true;
+    }
+    if (value >= 'a' && value <= 'f') {
+        *digit = static_cast<uint8_t>(value - 'a' + 10);
+        return true;
+    }
+    if (value >= 'A' && value <= 'F') {
+        *digit = static_cast<uint8_t>(value - 'A' + 10);
+        return true;
+    }
+    return false;
+}
+
+bool parse_command_id(const rosidl_runtime_c__String& value,
+                      uint32_t* session_id, uint32_t* sequence) {
+    if (value.data == nullptr || value.size != 20 || value.data[0] != 'S' ||
+        value.data[1] != '1' || value.data[2] != ':' || value.data[11] != ':') {
+        return false;
+    }
+    uint32_t parsed_session = 0;
+    uint32_t parsed_sequence = 0;
+    for (size_t i = 0; i < 8; ++i) {
+        uint8_t digit = 0;
+        if (!parse_hex_digit(value.data[3 + i], &digit)) {
+            return false;
+        }
+        parsed_session = (parsed_session << 4) | digit;
+        if (!parse_hex_digit(value.data[12 + i], &digit)) {
+            return false;
+        }
+        parsed_sequence = (parsed_sequence << 4) | digit;
+    }
+    *session_id = parsed_session;
+    *sequence = parsed_sequence;
+    return true;
+}
+
+control_logic::JointArray measured_positions() {
+    control_logic::JointArray measured{};
+    for (size_t joint = 0; joint < control_logic::kJointCount; ++joint) {
+        measured[joint] = pos_data[joint];
+    }
+    return measured;
+}
+
+void set_reject_reason(control_logic::RejectReason reason) {
+    last_reject_reason_code = static_cast<int32_t>(reason);
 }
 
 void command_callback(const void* message) {
@@ -84,8 +140,10 @@ void command_callback(const void* message) {
         (const sensor_msgs__msg__JointState*)message;
 
     if (command == NULL || command->name.size != 6 ||
-        command->position.size != 6) {
+        command->position.size != 6 || command->name.data == nullptr ||
+        command->position.data == nullptr) {
         invalid_command_count++;
+        set_reject_reason(control_logic::BAD_SHAPE);
         return;
     }
 
@@ -95,37 +153,81 @@ void command_callback(const void* message) {
     };
     for (int i = 0; i < 6; i++) {
         const size_t expected_size = strlen(expected_names[i]);
-        if (command->name.data[i].size != expected_size ||
+        if (command->name.data[i].data == nullptr ||
+            command->name.data[i].size != expected_size ||
             memcmp(command->name.data[i].data, expected_names[i], expected_size) != 0) {
             invalid_command_count++;
+            set_reject_reason(control_logic::BAD_NAME);
             return;
         }
         const double value = command->position.data[i];
         if (!isfinite(value)) {
             invalid_command_count++;
+            set_reject_reason(control_logic::NONFINITE);
             return;
         }
     }
 
     if (!servo_bus::command_within_limits(command->position.data)) {
         invalid_command_count++;
+        set_reject_reason(control_logic::OUT_OF_RANGE);
         return;
     }
 
-    for (int i = 0; i < 6; i++) {
-        target_pos_data[i] = command->position.data[i];
+    uint32_t session_id = 0;
+    uint32_t sequence = 0;
+    if (!parse_command_id(command->header.frame_id, &session_id, &sequence)) {
+        invalid_command_count++;
+        set_reject_reason(control_logic::BAD_SHAPE);
+        return;
     }
+
+    control_logic::Command queued_command{};
+    queued_command.session_id = session_id;
+    queued_command.sequence = sequence;
+    for (size_t joint = 0; joint < control_logic::kJointCount; ++joint) {
+        queued_command.target[joint] = command->position.data[joint];
+    }
+    const servo_bus::Stats& servo_stats = servo_bus::stats();
+    const bool bus_ready = servo_calibration_ok && servo_stats.response_mask == 0x3f;
+    const control_logic::Output output = controller.on_command(
+        queued_command, measured_positions(), bus_ready, millis());
     command_count++;
-    command_generation++;
     last_command_ms = millis();
-    command_fresh = true;
+    set_reject_reason(output.reject_reason);
+    if (output.should_arm) {
+        pending_arm_request = true;
+    }
 }
 
 void publish_joint_state() {
+    const uint32_t now_ms = millis();
+    state_msg.header.stamp.sec = static_cast<int32_t>(now_ms / 1000U);
+    state_msg.header.stamp.nanosec = (now_ms % 1000U) * 1000000U;
     state_msg.position.data = pos_data;
     state_msg.position.size = 6;
     last_publish_rc = rcl_publish(&state_pub, &state_msg, NULL);
     publish_count++;
+}
+
+void publish_status() {
+    const servo_bus::Stats& servo_stats = servo_bus::stats();
+    const uint32_t now_ms = millis();
+    status_data[0] = 1;
+    status_data[1] = static_cast<int32_t>(controller.state());
+    status_data[2] = static_cast<int32_t>(controller.session_id());
+    status_data[3] = static_cast<int32_t>(controller.last_received_sequence());
+    status_data[4] = static_cast<int32_t>(controller.last_applied_sequence());
+    status_data[5] = command_count > 0 ? static_cast<int32_t>(now_ms - last_command_ms) : 0;
+    status_data[6] = servo_stats.response_mask;
+    status_data[7] = last_reject_reason_code;
+    status_data[8] = static_cast<int32_t>(controller.command_timeout_count());
+    status_data[9] = static_cast<int32_t>(invalid_command_count);
+    status_data[10] = static_cast<int32_t>(controller.control_reject_count());
+    status_data[11] = static_cast<int32_t>(servo_stats.read_errors);
+    status_data[12] = static_cast<int32_t>(servo_stats.write_errors);
+    status_data[13] = WiFi.RSSI();
+    last_status_rc = rcl_publish(&status_pub, &status_msg, NULL);
 }
 
 bool print_servo_diagnostics() {
@@ -197,6 +299,8 @@ void setup() {
     TRY("node",     rclc_node_init_default(&node, "so101_follower", "", &support));
     TRY("publisher", rclc_publisher_init_best_effort(&state_pub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, JointState), "joint_states"));
+    TRY("status publisher", rclc_publisher_init_best_effort(&status_pub, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray), "follower_status"));
     TRY("subscription", rclc_subscription_init_best_effort(&command_sub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, JointState), "joint_command"));
     TRY("executor", rclc_executor_init(&executor, &support.context, 1, &allocator));
@@ -212,10 +316,12 @@ void setup() {
     Serial.printf("micro-ROS ready. Uptime: %lu s\n", (millis() - wifi_start) / 1000);
     servo_calibration_ok = print_servo_diagnostics();
 
-    // 每 5 秒报一次状态
+    // Keep actuator updates at 50 Hz and publish state/status at 20 Hz.
     unsigned long t = 0;
     unsigned long last_publish = millis();
     unsigned long last_servo_read = millis();
+    unsigned long last_control_tick = millis();
+    unsigned long last_status = millis();
     unsigned long last_diagnostics = millis();
     unsigned long wifi_lost_since = 0;
     while (true) {
@@ -224,55 +330,43 @@ void setup() {
             spin_error_count++;
             rcl_reset_error();
         }
-        if (millis() - last_publish >= 50) {
-            last_publish += 50;
-            publish_joint_state();
-        }
         if (millis() - last_servo_read >= 50) {
             last_servo_read += 50;
             servo_bus::read_all(pos_data);
         }
-        if (processed_command_generation != command_generation) {
-            processed_command_generation = command_generation;
+        if (millis() - last_control_tick >= 20) {
+            last_control_tick += 20;
             const servo_bus::Stats& servo_stats = servo_bus::stats();
-            bool command_safe = servo_calibration_ok &&
+            const bool bus_ready = servo_calibration_ok &&
                 servo_stats.response_mask == 0x3f;
-
-            if (!servo_control_armed) {
-                for (int i = 0; i < 6 && command_safe; ++i) {
-                    if (fabs(target_pos_data[i] - pos_data[i]) > 0.05) {
-                        command_safe = false;
-                    }
-                }
-                if (command_safe && servo_bus::arm_at_current_position(pos_data)) {
-                    servo_control_armed = true;
-                    for (int i = 0; i < 6; ++i) {
-                        last_applied_target[i] = pos_data[i];
-                    }
+            if (pending_arm_request) {
+                pending_arm_request = false;
+                const bool success = bus_ready && servo_bus::arm_at_current_position(pos_data);
+                controller.report_write_result(success);
+                set_reject_reason(success ? control_logic::NONE : control_logic::WRITE_FAILED);
+                if (success) {
                     Serial.println("Servo control ARMED at measured position.");
                 } else {
-                    control_reject_count++;
-                    Serial.println("Control command rejected: arm handshake mismatch.");
+                    Serial.println("Control command rejected: arm write failed.");
                 }
             } else {
-                for (int i = 0; i < 6 && command_safe; ++i) {
-                    if (fabs(target_pos_data[i] - last_applied_target[i]) > 0.25) {
-                        command_safe = false;
-                    }
-                }
-                if (command_safe && servo_bus::write_positions(target_pos_data)) {
-                    for (int i = 0; i < 6; ++i) {
-                        last_applied_target[i] = target_pos_data[i];
-                    }
-                } else {
-                    control_reject_count++;
-                    Serial.println("Control command rejected: limits, step, or bus state.");
+                const control_logic::Output output = controller.tick(
+                    millis(), measured_positions(), bus_ready);
+                set_reject_reason(output.reject_reason);
+                if (output.should_write) {
+                    const bool success = servo_bus::write_positions(output.applied_target.data());
+                    controller.report_write_result(success);
+                    set_reject_reason(success ? control_logic::NONE : control_logic::WRITE_FAILED);
                 }
             }
         }
-        if (command_fresh && millis() - last_command_ms > COMMAND_TIMEOUT_MS) {
-            command_fresh = false;
-            command_timeout_count++;
+        if (millis() - last_publish >= 50) {
+            last_publish += 50;
+            publish_joint_state();
+        }
+        if (millis() - last_status >= 50) {
+            last_status += 50;
+            publish_status();
         }
         if (millis() - last_diagnostics >= 60000) {
             last_diagnostics += 60000;
@@ -294,19 +388,19 @@ void setup() {
         if (millis() - t > 5000) {
             t = millis();
             const servo_bus::Stats& servo_stats = servo_bus::stats();
-            Serial.printf("OK RSSI:%d uptime:%lu pub:%lu pub_rc:%d cmd:%lu fresh:%d timeout:%lu invalid:%lu reject:%lu spin_err:%lu age:%lu servo_mask:0x%02x calib:%d armed:%d servo_ok:%lu servo_err:%lu write_ok:%lu write_err:%lu\n",
+            Serial.printf("OK RSSI:%d uptime:%lu pub:%lu pub_rc:%d cmd:%lu state:%d timeout:%lu invalid:%lu reject:%lu spin_err:%lu age:%lu servo_mask:0x%02x calib:%d armed:%d servo_ok:%lu servo_err:%lu write_ok:%lu write_err:%lu\n",
                 WiFi.RSSI(), (millis() - wifi_start) / 1000,
                 (unsigned long) publish_count, last_publish_rc,
                 (unsigned long) command_count,
-                command_fresh ? 1 : 0,
-                (unsigned long) command_timeout_count,
+                static_cast<int>(controller.state()),
+                (unsigned long) controller.command_timeout_count(),
                 (unsigned long) invalid_command_count,
-                (unsigned long) control_reject_count,
+                (unsigned long) controller.control_reject_count(),
                 (unsigned long) spin_error_count,
                 command_count > 0 ? millis() - last_command_ms : 0,
                 servo_stats.response_mask,
                 servo_calibration_ok ? 1 : 0,
-                servo_control_armed ? 1 : 0,
+                controller.state() == control_logic::ACTIVE ? 1 : 0,
                 (unsigned long) servo_stats.read_success,
                 (unsigned long) servo_stats.read_errors,
                 (unsigned long) servo_stats.write_success,

@@ -10,6 +10,11 @@ constexpr double kMinimumDtSeconds = 0.001;
 constexpr double kMaximumDtSeconds = 0.050;
 constexpr double kTargetEpsilon = 1e-9;
 
+template <typename T>
+T clamp_value(T value, T minimum, T maximum) {
+    return value < minimum ? minimum : (value > maximum ? maximum : value);
+}
+
 bool finite_target(const JointArray& target) {
     for (double value : target) {
         if (!std::isfinite(value)) {
@@ -183,8 +188,8 @@ Output Controller::tick(uint32_t now_ms, const JointArray& measured, bool bus_re
     }
 
     const uint32_t elapsed_ms = has_tick_ ? now_ms - last_tick_ms_ : 20;
-    const double dt = std::clamp(elapsed_ms / 1000.0,
-                                 kMinimumDtSeconds, kMaximumDtSeconds);
+    const double dt = clamp_value(elapsed_ms / 1000.0,
+                                  kMinimumDtSeconds, kMaximumDtSeconds);
     has_tick_ = true;
     last_tick_ms_ = now_ms;
     (void)measured;
@@ -196,7 +201,7 @@ Output Controller::tick(uint32_t now_ms, const JointArray& measured, bool bus_re
     for (size_t joint = 0; joint < kJointCount; ++joint) {
         const double difference = desired_target_[joint] - applied_target_[joint];
         const double maximum_step = kMaxVelocityRadS[joint] * dt;
-        const double step = std::clamp(difference, -maximum_step, maximum_step);
+        const double step = clamp_value(difference, -maximum_step, maximum_step);
         applied_target_[joint] += step;
         if (std::abs(step) > kTargetEpsilon) {
             output.should_write = true;
