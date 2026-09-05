@@ -77,3 +77,7 @@ def relative_target(action, leader_origin, follower_origin, calibration):
         raw = min(calibration[name]["range_max"], max(calibration[name]["range_min"], raw))
         positions.append(raw_to_radians(raw))
     return positions
+
+
+def capture_relative_origins(leader_action, follower_positions):
+    return dict(leader_action), list(follower_positions)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import secrets
 import time
 from pathlib import Path
 
@@ -12,13 +13,22 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Int32MultiArray
 
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from tools.soarm_wireless.control import (
     JOINT_NAMES,
     absolute_target,
+    capture_relative_origins,
     load_follower_calibration,
     relative_target,
+)
+from tools.soarm_wireless.protocol import (
+    FollowerState,
+    FollowerStatus,
+    encode_command_id,
+    is_newer_sequence,
+    status_matches_session,
 )
 
 
@@ -88,7 +98,14 @@ class WirelessFollowerBridge(Node):
         )
         self.latest_positions: list[float] | None = None
         self.latest_monotonic = 0.0
+        self.latest_status: FollowerStatus | None = None
+        self.latest_status_monotonic = 0.0
+        self.session_id = secrets.randbits(32)
+        self.next_sequence = 1
+        self.command_send_times: dict[int, float] = {}
+        self.last_ack_latency_ms: float | None = None
         self.create_subscription(JointState, "/joint_states", self._state_callback, qos)
+        self.create_subscription(Int32MultiArray, "/follower_status", self._status_callback, qos)
         self.publisher = self.create_publisher(JointState, "/joint_command", qos)
 
     def _state_callback(self, message: JointState) -> None:
@@ -100,33 +117,94 @@ class WirelessFollowerBridge(Node):
         self.latest_positions = values
         self.latest_monotonic = time.monotonic()
 
-    def publish_command(self, positions: list[float]) -> None:
+    def _status_callback(self, message: Int32MultiArray) -> None:
+        try:
+            status = FollowerStatus.from_array(list(message.data))
+        except ValueError:
+            return
+        self.latest_status = status
+        self.latest_status_monotonic = time.monotonic()
+        if status_matches_session(status, self.session_id):
+            send_time = self.command_send_times.pop(status.last_applied_sequence, None)
+            if send_time is not None:
+                self.last_ack_latency_ms = (time.monotonic() - send_time) * 1000.0
+
+    def reset_session(self) -> None:
+        self.session_id = secrets.randbits(32)
+        self.next_sequence = 1
+        self.command_send_times.clear()
+        self.last_ack_latency_ms = None
+
+    def publish_command(self, positions: list[float]) -> int:
+        sequence = self.next_sequence
+        self.next_sequence = (sequence + 1) & 0xFFFFFFFF
         message = JointState()
         message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = encode_command_id(self.session_id, sequence)
         message.name = JOINT_NAMES
         message.position = positions
         self.publisher.publish(message)
+        self.command_send_times[sequence] = time.monotonic()
+        while len(self.command_send_times) > 256:
+            self.command_send_times.pop(next(iter(self.command_send_times)))
+        return sequence
+
+    def owns_active_status(self) -> bool:
+        status = self.latest_status
+        return (
+            status is not None
+            and status_matches_session(status, self.session_id)
+            and status.state is FollowerState.ACTIVE
+            and status.response_mask == 0x3F
+        )
 
 
-def wait_for_follower(node: WirelessFollowerBridge, timeout: float = 12.0) -> list[float]:
+def wait_for_follower(
+    node: WirelessFollowerBridge, timeout: float = 12.0, after_monotonic: float = 0.0
+) -> list[float]:
     deadline = time.monotonic() + timeout
-    while node.latest_positions is None and time.monotonic() < deadline:
+    while (
+        (node.latest_positions is None or node.latest_monotonic <= after_monotonic)
+        and time.monotonic() < deadline
+    ):
         rclpy.spin_once(node, timeout_sec=0.1)
-    if node.latest_positions is None:
+    if node.latest_positions is None or node.latest_monotonic <= after_monotonic:
         raise RuntimeError("No /joint_states received from the wireless follower")
     return list(node.latest_positions)
 
 
-def arm_at_current_pose(node: WirelessFollowerBridge, current: list[float]) -> None:
-    # Let DDS discovery finish, then repeat the no-jump handshake to tolerate
-    # best-effort packet loss.
-    deadline = time.monotonic() + 1.0
+def arm_at_current_pose(
+    node: WirelessFollowerBridge, current: list[float], timeout: float = 5.0
+) -> None:
+    deadline = time.monotonic() + timeout
+    first_sequence: int | None = None
     while time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.05)
-    for _ in range(10):
-        node.publish_command(current)
-        rclpy.spin_once(node, timeout_sec=0.05)
-        time.sleep(0.05)
+        sequence = node.publish_command(current)
+        if first_sequence is None:
+            first_sequence = sequence
+        rclpy.spin_once(node, timeout_sec=0.02)
+        status = node.latest_status
+        if (
+            first_sequence is not None
+            and status is not None
+            and status_matches_session(status, node.session_id)
+            and status.state is FollowerState.ACTIVE
+            and status.response_mask == 0x3F
+            and (
+                status.last_received_sequence == first_sequence
+                or is_newer_sequence(status.last_received_sequence, first_sequence)
+            )
+        ):
+            return
+        time.sleep(0.08)
+    status_text = "no status"
+    if node.latest_status is not None:
+        status_text = (
+            f"state={node.latest_status.state.name}, "
+            f"reject={node.latest_status.reject_reason.name}, "
+            f"mask=0x{node.latest_status.response_mask:02x}"
+        )
+    raise RuntimeError(f"Follower arming was not confirmed within {timeout:.1f}s ({status_text})")
 
 
 def startup_blend(
@@ -146,6 +224,12 @@ def startup_blend(
         rclpy.spin_once(node, timeout_sec=0.0)
         if time.monotonic() - node.latest_monotonic > feedback_timeout:
             raise RuntimeError("Follower feedback timed out during startup synchronization")
+        if node.latest_status is not None and status_matches_session(
+            node.latest_status, node.session_id
+        ) and node.latest_status.state is not FollowerState.ACTIVE:
+            raise RuntimeError(
+                f"Follower left ACTIVE state during startup: {node.latest_status.state.name}"
+            )
         fraction = step / steps
         smooth = fraction * fraction * (3.0 - 2.0 * fraction)
         desired = [
@@ -196,11 +280,12 @@ def run() -> None:
         arm_at_current_pose(node, follower_start)
         print("Follower armed at its measured pose without a jump", flush=True)
 
-        initial_action = leader.get_action()
+        leader_origin = leader.get_action()
+        follower_origin = list(follower_start)
         if args.mapping_mode == "relative":
             initial_target = list(follower_start)
         else:
-            initial_target = absolute_target(initial_action, follower_calibration)
+            initial_target = absolute_target(leader_origin, follower_calibration)
         command = startup_blend(
             node,
             follower_start,
@@ -222,12 +307,30 @@ def run() -> None:
             if now - node.latest_monotonic > args.feedback_timeout:
                 raise RuntimeError("Follower feedback timed out; command publishing stopped")
 
+            status = node.latest_status
+            if (
+                status is not None
+                and status_matches_session(status, node.session_id)
+                and status.state in (FollowerState.HOLDING_TIMEOUT, FollowerState.BUS_FAULT)
+            ):
+                previous_feedback = node.latest_monotonic
+                node.reset_session()
+                follower_start = wait_for_follower(node, timeout=5.0, after_monotonic=previous_feedback)
+                arm_at_current_pose(node, follower_start)
+                leader_origin, follower_origin = capture_relative_origins(
+                    leader.get_action(), follower_start
+                )
+                command = list(follower_start)
+                next_tick = time.monotonic()
+                print("Follower session recovered with a fresh near-current-pose handshake", flush=True)
+                continue
+
             action = leader.get_action()
             if args.mapping_mode == "relative":
                 desired = relative_target(
                     action,
-                    initial_action,
-                    follower_start,
+                    leader_origin,
+                    follower_origin,
                     follower_calibration,
                 )
             else:

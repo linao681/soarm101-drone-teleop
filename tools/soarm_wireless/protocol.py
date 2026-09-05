@@ -41,6 +41,11 @@ def decode_command_id(frame_id: str) -> tuple[int, int]:
         raise ValueError(f"Malformed SO-ARM command ID: {frame_id!r}") from error
 
 
+def is_newer_sequence(sequence: int, previous: int) -> bool:
+    distance = (sequence - previous) & 0xFFFFFFFF
+    return 0 < distance < 0x80000000
+
+
 @dataclass(frozen=True)
 class FollowerStatus:
     version: int
@@ -85,3 +90,7 @@ class FollowerStatus:
             write_errors=int(values[12]),
             rssi_dbm=int(values[13]),
         )
+
+
+def status_matches_session(status: FollowerStatus, session_id: int) -> bool:
+    return status.session_id == (session_id & 0xFFFFFFFF)
