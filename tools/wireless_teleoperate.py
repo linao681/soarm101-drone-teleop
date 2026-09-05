@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import time
 from pathlib import Path
@@ -15,19 +14,12 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from sensor_msgs.msg import JointState
 
 from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
-
-
-JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
-BODY_JOINTS = set(JOINT_NAMES[:-1])
-ENCODER_RESOLUTION = 4096.0
-TWO_PI = 2.0 * math.pi
+from tools.soarm_wireless.control import (
+    JOINT_NAMES,
+    absolute_target,
+    load_follower_calibration,
+    relative_target,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,75 +70,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_follower_calibration(path: Path) -> dict[str, dict[str, int]]:
-    with path.open() as calibration_file:
-        calibration = json.load(calibration_file)
-
-    if list(calibration) != JOINT_NAMES:
-        raise ValueError(
-            f"Unexpected joints in {path}: {list(calibration)}; expected {JOINT_NAMES}"
-        )
-    for expected_id, name in enumerate(JOINT_NAMES, start=1):
-        values = calibration[name]
-        if values["id"] != expected_id:
-            raise ValueError(f"{name} has ID {values['id']}, expected {expected_id}")
-        if values["range_min"] >= values["range_max"]:
-            raise ValueError(f"Invalid range for {name}: {values}")
-        if values.get("drive_mode", 0) != 0:
-            raise ValueError(f"Unsupported nonzero drive_mode for {name}")
-    return calibration
-
-
-def leader_action_to_follower_radians(
-    action: dict[str, float], calibration: dict[str, dict[str, int]]
-) -> list[float]:
-    positions = []
-    for name in JOINT_NAMES:
-        key = f"{name}.pos"
-        if key not in action or not math.isfinite(action[key]):
-            raise ValueError(f"Invalid or missing leader value for {key}")
-
-        normalized = float(action[key])
-        if name in BODY_JOINTS:
-            normalized = min(100.0, max(-100.0, normalized))
-            fraction = (normalized + 100.0) / 200.0
-        else:
-            normalized = min(100.0, max(0.0, normalized))
-            fraction = normalized / 100.0
-
-        minimum = calibration[name]["range_min"]
-        maximum = calibration[name]["range_max"]
-        raw = minimum + fraction * (maximum - minimum)
-        positions.append((raw - ENCODER_RESOLUTION / 2.0) * TWO_PI / ENCODER_RESOLUTION)
-    return positions
-
-
-def leader_delta_to_follower_radians(
-    action: dict[str, float],
-    leader_origin: dict[str, float],
-    follower_origin: list[float],
-    calibration: dict[str, dict[str, int]],
-) -> list[float]:
-    positions = []
-    for index, name in enumerate(JOINT_NAMES):
-        key = f"{name}.pos"
-        value = float(action[key])
-        origin = float(leader_origin[key])
-        if not math.isfinite(value) or not math.isfinite(origin):
-            raise ValueError(f"Invalid leader value for {key}")
-
-        normalized_span = 200.0 if name in BODY_JOINTS else 100.0
-        raw_span = calibration[name]["range_max"] - calibration[name]["range_min"]
-        follower_origin_raw = (
-            follower_origin[index] * ENCODER_RESOLUTION / TWO_PI
-            + ENCODER_RESOLUTION / 2.0
-        )
-        raw = follower_origin_raw + (value - origin) * raw_span / normalized_span
-        raw = min(calibration[name]["range_max"], max(calibration[name]["range_min"], raw))
-        positions.append((raw - ENCODER_RESOLUTION / 2.0) * TWO_PI / ENCODER_RESOLUTION)
-    return positions
-
-
 def limit_step(previous: list[float], desired: list[float], maximum: float) -> list[float]:
     return [
         old + min(max(target - old, -maximum), maximum)
@@ -169,7 +92,7 @@ class WirelessFollowerBridge(Node):
         self.publisher = self.create_publisher(JointState, "/joint_command", qos)
 
     def _state_callback(self, message: JointState) -> None:
-        if list(message.name) != JOINT_NAMES or len(message.position) != len(JOINT_NAMES):
+        if tuple(message.name) != JOINT_NAMES or len(message.position) != len(JOINT_NAMES):
             return
         values = list(message.position)
         if not all(math.isfinite(value) for value in values):
@@ -277,7 +200,7 @@ def run() -> None:
         if args.mapping_mode == "relative":
             initial_target = list(follower_start)
         else:
-            initial_target = leader_action_to_follower_radians(initial_action, follower_calibration)
+            initial_target = absolute_target(initial_action, follower_calibration)
         command = startup_blend(
             node,
             follower_start,
@@ -301,14 +224,14 @@ def run() -> None:
 
             action = leader.get_action()
             if args.mapping_mode == "relative":
-                desired = leader_delta_to_follower_radians(
+                desired = relative_target(
                     action,
                     initial_action,
                     follower_start,
                     follower_calibration,
                 )
             else:
-                desired = leader_action_to_follower_radians(action, follower_calibration)
+                desired = absolute_target(action, follower_calibration)
             command = limit_step(command, desired, args.max_step_rad)
             node.publish_command(command)
 
