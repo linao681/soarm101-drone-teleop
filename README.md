@@ -36,6 +36,20 @@ export SOARM_PYTHON=/path/to/lerobot/bin/python
 ./start_soarm_demo.sh --check
 ```
 
+## 无线可靠性验证
+
+启动器会在动作前检查 `/joint_states` 和 `/follower_status`，每次运行把状态、序列号、ACK 延迟、RSSI 及关节跟踪误差保存到 `logs/teleop_YYYYmmdd_HHMMSS.csv`。分析一轮运行：
+
+```bash
+./start_soarm_demo.sh
+python tools/analyze_wireless_log.py logs/teleop_YYYYmmdd_HHMMSS.csv
+cd firmware/xiao_soarm && pio test -e native
+cd firmware/xiao_soarm && pio run -e seeed_xiao_esp32c3
+```
+
+可靠性测试顺序、状态码、状态数组和实机证据记录见
+[`docs/soarm_wireless_test_matrix.md`](docs/soarm_wireless_test_matrix.md)。停止程序后，从臂保留最后一个已应用目标；物理紧急停止是移除舵机电源。
+
 ## 说明
 
 本仓库包含 Hugging Face LeRobot 代码及本项目的实验性硬件适配代码。

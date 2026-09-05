@@ -24,19 +24,31 @@ const char* AGENT_IP = "YOUR_COMPUTER_IP";
 ## 编译与烧录
 
 ```bash
-pio run
+pio test -e native
+pio run -e seeed_xiao_esp32c3
 pio run --target upload
+```
+
+回到仓库根目录后可分析遥操日志：
+
+```bash
+python tools/analyze_wireless_log.py logs/teleop_YYYYmmdd_HHMMSS.csv
 ```
 
 micro-ROS 静态库位于 `lib/microros/`，ESP32-C3 使用 `riscv32` 工具链。
 舵机校准参数写在 `src/servo_bus.cpp` 中，用于启动时的 EEPROM 一致性检查。
+原生状态机测试和 ESP32-C3 编译通过前不要执行 upload；烧录前再次确认
+`src/wifi_config.h` 只存在于本机且不会进入 Git。
 
 ## ROS 接口
 
 ```text
 /joint_states   sensor_msgs/msg/JointState   从臂反馈，约20 Hz
 /joint_command  sensor_msgs/msg/JointState   从臂目标位置
+/follower_status std_msgs/msg/Int32MultiArray 可靠性状态，约20 Hz，固定14字段
 ```
 
 首次控制命令必须接近从臂当前回读姿态，之后固件会检查校准软限位和单次步进
-上限。通信超时后保持最后目标位置。
+上限。控制 tick 为 50 Hz，首次握手容差为 0.05 rad，通信超时 500 ms 后保持最后目标位置。
+停止桥接程序不会清除最后目标；物理紧急停止是移除舵机电源。完整状态码和分阶段
+测试矩阵见 `../../docs/soarm_wireless_test_matrix.md`。
