@@ -17,7 +17,7 @@ FOLLOWER_CALIBRATION="$CALIBRATION_DIR/follower_recal.json"
 
 # These values match the WiFi transport compiled into the XIAO firmware.
 EXPECTED_WIFI_SSID="${SOARM_WIFI_SSID:-vivoX100s}"
-EXPECTED_AGENT_IP="${SOARM_AGENT_IP:-10.133.64.21}"
+EXPECTED_AGENT_IP="${SOARM_AGENT_IP:-10.35.214.21}"
 AGENT_PORT="${SOARM_AGENT_PORT:-8888}"
 
 # Use the controller's stable USB identity instead of the changing ttyACM number.
@@ -27,6 +27,8 @@ LEADER_ID="${SOARM_LEADER_ID:-leader_recal}"
 
 AGENT_LOG_DIR="$PROJECT_DIR/logs"
 AGENT_LOG="$AGENT_LOG_DIR/micro_ros_agent.log"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+METRICS_LOG="$AGENT_LOG_DIR/teleop_${RUN_ID}.csv"
 STARTED_AGENT_PID=""
 CHECK_ONLY=false
 
@@ -41,6 +43,9 @@ cleanup() {
     if [[ -n "$STARTED_AGENT_PID" ]] && kill -0 "$STARTED_AGENT_PID" 2>/dev/null; then
         kill "$STARTED_AGENT_PID" 2>/dev/null || true
         wait "$STARTED_AGENT_PID" 2>/dev/null || true
+    fi
+    if [[ -f "$METRICS_LOG" ]]; then
+        echo "指标日志分析命令：$PYTHON $PROJECT_DIR/tools/analyze_wireless_log.py $METRICS_LOG"
     fi
 }
 trap cleanup EXIT
@@ -114,7 +119,10 @@ echo "[4/4] 等待无线从臂上线……"
 if ! timeout 15s ros2 topic echo /joint_states --once >/dev/null 2>&1; then
     fail "15 秒内没有收到 /joint_states。请检查从臂 5V 电源、XIAO 天线和手机热点"
 fi
-echo "预检通过：主臂、从臂、WiFi 和 micro-ROS 均已就绪"
+if ! timeout 15s ros2 topic echo /follower_status --once >/dev/null 2>&1; then
+    fail "收到关节状态，但没有 /follower_status；请确认 XIAO 已烧录可靠性固件"
+fi
+echo "预检通过：主臂、从臂、WiFi、micro-ROS 和从臂状态反馈均已就绪"
 
 if $CHECK_ONLY; then
     echo "--check 完成，未启动舵机遥操"
@@ -122,6 +130,7 @@ if $CHECK_ONLY; then
 fi
 
 echo
+echo "本次指标日志：$METRICS_LOG"
 echo "即将从双方当前位置无跳变启动，按 Ctrl+C 停止。"
 echo "从臂停止后会保持最后位置。"
 echo
@@ -133,4 +142,5 @@ echo
     --follower-calibration "$FOLLOWER_CALIBRATION" \
     --mapping-mode relative \
     --rate 30 \
-    --max-step-rad 0.24
+    --max-step-rad 0.24 \
+    --metrics-csv "$METRICS_LOG"
