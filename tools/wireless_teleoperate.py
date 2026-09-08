@@ -197,6 +197,7 @@ class WirelessFollowerBridge(Node):
         message.name = JOINT_NAMES
         message.position = positions
         self.publisher.publish(message)
+        self.last_command_sequence = sequence
         self.command_send_times[sequence] = time.monotonic()
         while len(self.command_send_times) > 256:
             self.command_send_times.pop(next(iter(self.command_send_times)))
