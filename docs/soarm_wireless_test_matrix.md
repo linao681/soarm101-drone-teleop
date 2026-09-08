@@ -67,7 +67,7 @@
 | 1 | PC-only pytest 和 lint；可靠性相关测试全部通过 | 2026-09-06 | `edf76d7` | Codex | 无硬件 | 通过（可靠性范围）；全仓库 baseline 另有既有 OpenCV PNG fixture 失败 | 终端日志；`tests/tools/` |
 | 2 | `pio test -e native`；状态机测试全部通过 | 2026-09-06 | `edf76d7` | Codex | 无硬件 | 通过，6/6 | `firmware/xiao_soarm/.pio/` |
 | 3 | ESP32-C3 编译成功，不上传 | 2026-09-06 | `edf76d7` | Codex | 无硬件 | 通过；未烧录 | `firmware/xiao_soarm/.pio/` |
-| 4 | XIAO 仅 USB 供电、舵机电源断开；确认 ROS entities 和 `/follower_status` 发布 | 待补 | 待补 | 待补 | USB 供电，舵机电源断开 | 未执行 | 待补：`logs/gate-04/` |
+| 4 | XIAO 仅 USB 供电、舵机电源断开；确认 ROS entities 和 `/follower_status` 发布 | 2026-09-08 | `68ad76b` | linao | USB 供电，舵机电源断开 | 通过；状态持续发布，`response_mask=0x00`、`BUS_NOT_READY`，未发送运动命令 | `logs/gate-04/2026-09-08-usb-only.md` |
 | 5 | 机械支撑从臂；首次握手无可见跳动 | 待补 | 待补 | 待补 | 舵机电源接通，机械臂受支撑 | 未执行 | 待补：`logs/gate-05/` |
 | 6 | 单关节小动作，命令步长限制为 0.10 rad；方向正确且收到确认 | 待补 | 待补 | 待补 | 机械支撑，空间清空 | 未执行 | 待补：`logs/gate-06/` |
 | 7 | 六关节慢动作；速度限制、温度、电压正常且无拒绝 | 待补 | 待补 | 待补 | 机械支撑，持续观察电源 | 未执行 | 待补：`logs/gate-07/` |
