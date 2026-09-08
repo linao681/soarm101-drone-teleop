@@ -8,6 +8,7 @@ from tools.soarm_wireless.gate6 import (
     build_target,
     evaluate_completion,
     validate_preflight,
+    write_evidence,
 )
 from tools.soarm_wireless.protocol import FollowerState, FollowerStatus, RejectReason
 
@@ -105,3 +106,11 @@ def test_completion_rejects_status_from_another_session(status_active):
 
     with pytest.raises(Gate6Failure, match="different session"):
         evaluate_completion(start, target, target, status_active, 8, 0, 0)
+
+
+def test_write_evidence_creates_parseable_json(tmp_path):
+    path = tmp_path / "gate6.json"
+
+    write_evidence(path, {"result": "PASS", "joint": "gripper", "delta_rad": 0.10})
+
+    assert path.read_text() == '{\n  "delta_rad": 0.1,\n  "joint": "gripper",\n  "result": "PASS"\n}\n'

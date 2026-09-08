@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from tools.soarm_wireless.control import JOINT_NAMES, raw_to_radians
 from tools.soarm_wireless.protocol import FollowerState, RejectReason
 
@@ -10,6 +13,14 @@ POSITION_TOLERANCE_RAD = 0.03
 
 class Gate6Failure(RuntimeError):
     """A safety or acceptance condition failed during Gate 6."""
+
+
+def write_evidence(path: Path, evidence: dict[str, object]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
 
 
 def build_target(start: list[float], calibration: dict[str, dict[str, int]]) -> list[float]:
