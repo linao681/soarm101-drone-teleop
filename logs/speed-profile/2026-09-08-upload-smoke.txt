@@ -1,0 +1,9 @@
+--- Terminal on /dev/ttyACM0 | 115200 8-N-1
+--- Available filters and text transformations: debug, default, direct, esp32_exception_decoder, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+OK RSSI:-39 uptime:73 pub:1406 pub_rc:0 cmd:0 state:0 timeout:0 invalid:0 reject:0 spin_err:0 age:0 servo_mask:0x00 calib:0 armed:0 servo_ok:0 servo_err:8436 write_ok:0 write_err:0
+OK RSSI:-39 uptime:78 pub:1506 pub_rc:0 cmd:0 state:0 timeout:0 invalid:0 reject:0 spin_err:0 age:0 servo_mask:0x00 calib:0 armed:0 servo_ok:0 servo_err:9036 write_ok:0 write_err:0
+OK RSSI:-39 uptime:83 pub:1606 pub_rc:0 cmd:0 state:0 timeout:0 invalid:0 reject:0 spin_err:0 age:0 servo_mask:0x00 calib:0 armed:0 servo_ok:0 servo_err:9636 write_ok:0 write_err:0
+OK RSSI:-39 uptime:88 pub:1706 pub_rc:0 cmd:0 state:0 timeout:0 invalid:0 reject:0 spin_err:0 age:0 servo_mask:0x00 calib:0 armed:0 servo_ok:0 servo_err:10236 write_ok:0 write_err:0
+OK RSSI:-38 uptime:93 pub:1806 pub_rc:0 cmd:0 state:0 timeout:0 invalid:0 reject:0 spin_err:0 age:0 servo_mask:0x00 calib:0 armed:0 servo_ok:0 servo_err:10836 write_ok:0 write_err:0
