@@ -1,9 +1,10 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from builtin_interfaces.msg import Time
 
-from tools.wireless_teleoperate import WirelessFollowerBridge
+from tools.wireless_teleoperate import WirelessFollowerBridge, update_feedback_recovery
 
 
 class _Publisher:
@@ -33,6 +34,35 @@ def test_publish_command_records_sequence_for_metrics(monkeypatch):
 
     assert sequence == 7
     assert bridge.last_command_sequence == 7
+
+
+def test_feedback_recovery_waits_for_reconnect_window():
+    stale_since = update_feedback_recovery(
+        now=10.0,
+        latest_feedback=9.0,
+        stale_since=None,
+        feedback_timeout=0.5,
+        recovery_timeout=5.0,
+    )
+    assert stale_since == 10.0
+    assert update_feedback_recovery(
+        now=10.5,
+        latest_feedback=9.0,
+        stale_since=stale_since,
+        feedback_timeout=0.5,
+        recovery_timeout=5.0,
+    ) == 10.0
+
+
+def test_feedback_recovery_fails_after_reconnect_window():
+    with pytest.raises(RuntimeError, match="feedback recovery timed out"):
+        update_feedback_recovery(
+            now=15.1,
+            latest_feedback=9.0,
+            stale_since=10.0,
+            feedback_timeout=0.5,
+            recovery_timeout=5.0,
+        )
 
 
 def test_gate6_runner_requires_confirmation_and_uses_exact_gripper_delta():

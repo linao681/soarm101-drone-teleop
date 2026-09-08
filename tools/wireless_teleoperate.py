@@ -64,6 +64,12 @@ def parse_args() -> argparse.Namespace:
         help="Stop publishing if follower feedback is older than this many seconds",
     )
     parser.add_argument(
+        "--recovery-timeout",
+        type=float,
+        default=5.0,
+        help="Seconds to wait for feedback to return after a WiFi interruption",
+    )
+    parser.add_argument(
         "--startup-duration",
         type=float,
         default=8.0,
@@ -92,6 +98,23 @@ def limit_step(previous: list[float], desired: list[float], maximum: float) -> l
         old + min(max(target - old, -maximum), maximum)
         for old, target in zip(previous, desired, strict=True)
     ]
+
+
+def update_feedback_recovery(
+    now: float,
+    latest_feedback: float,
+    stale_since: float | None,
+    feedback_timeout: float,
+    recovery_timeout: float,
+) -> float | None:
+    """Track a temporary feedback outage without publishing stale targets."""
+    if now - latest_feedback <= feedback_timeout:
+        return None
+    if stale_since is None:
+        return now
+    if now - stale_since > recovery_timeout:
+        raise RuntimeError("Follower feedback recovery timed out; command publishing stopped")
+    return stale_since
 
 
 class WirelessFollowerBridge(Node):
@@ -305,6 +328,8 @@ def run() -> None:
         raise ValueError("--rate must be positive")
     if not 0.0 < args.max_step_rad < 0.25:
         raise ValueError("--max-step-rad must be between 0 and the firmware's 0.25-rad limit")
+    if args.feedback_timeout <= 0.0 or args.recovery_timeout <= 0.0:
+        raise ValueError("--feedback-timeout and --recovery-timeout must be positive")
 
     follower_calibration = load_follower_calibration(args.follower_calibration)
     leader_config = SO101LeaderConfig(
@@ -362,12 +387,21 @@ def run() -> None:
         period = 1.0 / args.rate
         next_tick = time.monotonic()
         last_report = 0.0
+        stale_since: float | None = None
         while rclpy.ok():
             rclpy.spin_once(node, timeout_sec=0.0)
             node.log_latest_status()
             now = time.monotonic()
-            if now - node.latest_monotonic > args.feedback_timeout:
-                raise RuntimeError("Follower feedback timed out; command publishing stopped")
+            stale_since = update_feedback_recovery(
+                now,
+                node.latest_monotonic,
+                stale_since,
+                args.feedback_timeout,
+                args.recovery_timeout,
+            )
+            if stale_since is not None:
+                time.sleep(min(period, 0.05))
+                continue
 
             status = node.latest_status
             if (
