@@ -92,6 +92,13 @@ def test_recovery_target_catches_up_to_leader_motion_during_outage():
     assert all(value > 0.0 for value in target)
 
 
+def test_recovery_blend_duration_has_three_second_default():
+    source = (Path(__file__).parents[2] / "tools" / "wireless_teleoperate.py").read_text()
+
+    assert '"--recovery-blend-duration"' in source
+    assert "default=3.0" in source
+
+
 def test_gate6_runner_requires_confirmation_and_uses_exact_gripper_delta():
     source = (Path(__file__).parents[2] / "tools" / "validate_wireless_gate6.py").read_text()
 

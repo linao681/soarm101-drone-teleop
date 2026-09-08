@@ -31,6 +31,13 @@ def test_wireless_launcher_allows_wifi_recovery_window_override():
     assert '    --recovery-timeout "$RECOVERY_TIMEOUT" \\' in launcher
 
 
+def test_wireless_launcher_forwards_recovery_blend_duration():
+    launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
+
+    assert 'RECOVERY_BLEND_DURATION="${SOARM_RECOVERY_BLEND_DURATION:-3}"' in launcher
+    assert '    --recovery-blend-duration "$RECOVERY_BLEND_DURATION" \\' in launcher
+
+
 def test_check_mode_does_not_require_leader_hardware():
     launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
 

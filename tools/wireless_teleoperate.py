@@ -75,6 +75,12 @@ def parse_args() -> argparse.Namespace:
         help="Seconds used to blend from the follower pose to the initial leader pose",
     )
     parser.add_argument(
+        "--recovery-blend-duration",
+        type=float,
+        default=3.0,
+        help="Seconds used to smoothly catch up after follower session recovery",
+    )
+    parser.add_argument(
         "--mapping-mode",
         choices=("relative", "absolute"),
         default="relative",
@@ -341,6 +347,8 @@ def run() -> None:
         raise ValueError("--max-step-rad must be between 0 and the firmware's 0.25-rad limit")
     if args.feedback_timeout <= 0.0 or args.recovery_timeout <= 0.0:
         raise ValueError("--feedback-timeout and --recovery-timeout must be positive")
+    if args.startup_duration <= 0.0 or args.recovery_blend_duration <= 0.0:
+        raise ValueError("--startup-duration and --recovery-blend-duration must be positive")
 
     follower_calibration = load_follower_calibration(args.follower_calibration)
     leader_config = SO101LeaderConfig(
@@ -438,7 +446,7 @@ def run() -> None:
                     node,
                     follower_start,
                     recovery_target,
-                    args.startup_duration,
+                    args.recovery_blend_duration,
                     args.rate,
                     args.max_step_rad,
                     args.feedback_timeout,
