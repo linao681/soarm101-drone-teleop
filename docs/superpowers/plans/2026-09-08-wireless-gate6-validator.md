@@ -29,7 +29,7 @@
 
 **Interfaces:**
 - Consumes: `JOINT_NAMES` and `raw_to_radians` from `tools.soarm_wireless.control`; `FollowerStatus`, `FollowerState`, and `RejectReason` from `tools.soarm_wireless.protocol`.
-- Produces: `GRIPPER_INDEX`, `GRIPPER_DELTA_RAD`, `POSITION_TOLERANCE_RAD`, `Gate6Failure`, `build_target`, `validate_preflight`, and `evaluate_completion` for the ROS runner.
+- Produces: `GRIPPER_INDEX`, `GRIPPER_DELTA_RAD`, `POSITION_TOLERANCE_RAD`, `Gate6Failure`, `build_target`, `validate_preflight`, and `evaluate_completion(start, target, measured, status, expected_session_id, read_errors, write_errors)` for the ROS runner.
 
 - [ ] **Step 1: Write the failing pure-logic tests**
 
@@ -63,12 +63,12 @@ def test_completion_rejects_wrong_direction_and_other_joint_motion(status_active
     wrong_direction = [0.0] * 6
     wrong_direction[-1] = -0.05
     with pytest.raises(Gate6Failure, match="gripper direction"):
-        evaluate_completion(start, target, wrong_direction, status_active, 0, 0)
+        evaluate_completion(start, target, wrong_direction, status_active, 7, 0, 0)
 
     moved_body_joint = list(target)
     moved_body_joint[0] = 0.04
     with pytest.raises(Gate6Failure, match="unexpected motion"):
-        evaluate_completion(start, target, moved_body_joint, status_active, 0, 0)
+        evaluate_completion(start, target, moved_body_joint, status_active, 7, 0, 0)
 ```
 
 - [ ] **Step 2: Run the new tests to verify they fail**
@@ -122,7 +122,12 @@ def validate_preflight(status, read_errors: int, write_errors: int) -> None:
         raise Gate6Failure("bus error counters changed during preflight")
 
 
-def evaluate_completion(start, target, measured, status, read_errors: int, write_errors: int) -> None:
+def evaluate_completion(
+    start, target, measured, status, expected_session_id: int,
+    read_errors: int, write_errors: int,
+) -> None:
+    if status.session_id != expected_session_id:
+        raise Gate6Failure("follower status belongs to a different session")
     if status.response_mask != 0x3F or status.state is not FollowerState.ACTIVE:
         raise Gate6Failure("follower is not active with all servos online")
     if status.reject_reason is not RejectReason.NONE:
@@ -159,7 +164,14 @@ def test_completion_accepts_positive_gripper_motion(status_active):
     start = [0.0] * 6
     target = build_target(start, {"gripper": {"range_min": 0, "range_max": 4095}})
     measured = list(target)
-    evaluate_completion(start, target, measured, status_active, 0, 0)
+    evaluate_completion(start, target, measured, status_active, 7, 0, 0)
+
+
+def test_completion_rejects_status_from_another_session(status_active):
+    start = [0.0] * 6
+    target = build_target(start, {"gripper": {"range_min": 0, "range_max": 4095}})
+    with pytest.raises(Gate6Failure, match="different session"):
+        evaluate_completion(start, target, target, status_active, 8, 0, 0)
 ```
 
 - [ ] **Step 5: Run the pure test suite to verify it passes**
@@ -255,7 +267,7 @@ git commit -m "feat: save gate 6 validation evidence"
 
 **Interfaces:**
 - Consumes: `WirelessFollowerBridge`, `wait_for_follower`, `arm_at_current_pose`, `load_follower_calibration`; `build_target`, `validate_preflight`, `evaluate_completion`, `write_evidence`.
-- Produces: executable CLI `python tools/validate_wireless_gate6.py --yes --follower-calibration cali/my_follower.json` and one JSON evidence record.
+- Produces: executable CLI `python tools/validate_wireless_gate6.py --yes --follower-calibration cali/my_follower.json`; internal helpers `require_confirmation(yes: bool) -> None`, `publish_until_acknowledged(node, target, expected_session_id, baseline_read_errors, baseline_write_errors, timeout_s) -> int`, and `status_to_list(status) -> list[int] | None`; and one JSON evidence record.
 
 - [ ] **Step 1: Write the failing runner contract test**
 
@@ -285,6 +297,84 @@ Expected: FAIL because `tools/validate_wireless_gate6.py` does not exist.
 - [ ] **Step 3: Implement the runner loop and evidence record**
 
 ```python
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run SO-ARM101 wireless Gate 6")
+    parser.add_argument("--follower-calibration", type=Path, required=True)
+    parser.add_argument(
+        "--evidence-path", type=Path,
+        default=Path("logs/gate-06") / f"gate6-{time.strftime('%Y%m%d-%H%M%S')}.json",
+    )
+    parser.add_argument("--yes", action="store_true")
+    return parser.parse_args()
+
+
+def require_confirmation(yes: bool) -> None:
+    if yes:
+        return
+    print("Support the follower, clear the workspace, and be ready to remove servo power.")
+    if input('Type MOVE to publish the +0.10 rad gripper command: ') != "MOVE":
+        raise Gate6Failure("operator did not confirm MOVE")
+
+
+def status_to_list(status):
+    if status is None:
+        return None
+    return [
+        status.version, int(status.state), status.session_id,
+        status.last_received_sequence, status.last_applied_sequence,
+        status.command_age_ms, status.response_mask, int(status.reject_reason),
+        status.command_timeout_count, status.invalid_command_count,
+        status.control_reject_count, status.read_errors, status.write_errors,
+        status.rssi_dbm,
+    ]
+
+
+def publish_until_acknowledged(
+    node, target, expected_session_id, baseline_read_errors,
+    baseline_write_errors, timeout_s=3.0,
+) -> int:
+    deadline = time.monotonic() + timeout_s
+    first_sequence = node.publish_command(target)
+    next_publish = time.monotonic() + 0.05
+    while time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.02)
+        if time.monotonic() - node.latest_monotonic > 0.5:
+            raise Gate6Failure("follower feedback became stale during movement")
+        status = node.latest_status
+        if status is None:
+            continue
+        if status.session_id != expected_session_id:
+            raise Gate6Failure("movement acknowledgment belongs to a different session")
+        if status.response_mask != 0x3F or status.state is not FollowerState.ACTIVE:
+            raise Gate6Failure("follower left ACTIVE or lost a servo")
+        if status.reject_reason is not RejectReason.NONE:
+            raise Gate6Failure(f"follower rejected movement: {status.reject_reason.name}")
+        if status.read_errors != baseline_read_errors or status.write_errors != baseline_write_errors:
+            raise Gate6Failure("bus error counters increased during movement")
+        if status.last_applied_sequence == first_sequence or is_newer_sequence(
+            status.last_applied_sequence, first_sequence
+        ):
+            return first_sequence
+        if time.monotonic() >= next_publish:
+            node.publish_command(target)
+            next_publish += 0.05
+        time.sleep(0.03)
+    raise Gate6Failure("movement command was not acknowledged within 3 seconds")
+
+
+def wait_for_measured_target(node, target, timeout_s=1.0) -> list[float]:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.02)
+        measured = node.latest_positions
+        if measured is not None and all(
+            abs(value - desired) <= POSITION_TOLERANCE_RAD
+            for value, desired in zip(measured, target, strict=True)
+        ):
+            return list(measured)
+    raise Gate6Failure("follower did not reach the requested measured pose")
+
+
 # Essential control sequence inside run(args)
 rclpy.init()
 node = WirelessFollowerBridge()
@@ -301,15 +391,23 @@ try:
     require_confirmation(args.yes)
     arm_at_current_pose(node, start)
     movement_sequence = publish_until_acknowledged(
-        node, target, baseline_read_errors, baseline_write_errors, timeout_s=3.0
+        node, target, node.session_id, baseline_read_errors,
+        baseline_write_errors, timeout_s=3.0,
     )
-    final = wait_for_follower(node, timeout=1.0, after_monotonic=0.0)
+    final = wait_for_measured_target(node, target)
     evaluate_completion(
-        start, target, final, node.latest_status,
+        start, target, final, node.latest_status, node.session_id,
         baseline_read_errors, baseline_write_errors,
     )
-    evidence.update({"result": "PASS", "start": start, "target": target,
-                     "measured_final": final, "movement_sequence": movement_sequence})
+    evidence.update({
+        "result": "PASS", "session_id": node.session_id,
+        "start": start, "target": target, "measured_final": final,
+        "movement_sequence": movement_sequence,
+        "status_initial": status_to_list(status),
+        "ack_latency_ms": node.last_ack_latency_ms,
+        "baseline_read_errors": baseline_read_errors,
+        "baseline_write_errors": baseline_write_errors,
+    })
 except Exception as error:
     evidence["failure_reason"] = str(error)
     raise
@@ -320,11 +418,15 @@ finally:
     rclpy.shutdown()
 ```
 
-`publish_until_acknowledged` must publish at 20 Hz, call `rclpy.spin_once`,
-fail on stale feedback, wrong session, non-`ACTIVE` state, nonzero rejection,
-non-`0x3f` mask, or increased error counters, and return the acknowledged
-movement sequence. `require_confirmation` prints the power/support warning and
-accepts only an exact `MOVE` input when `--yes` is absent.
+The runner imports `argparse`, `time`, `Path`, `rclpy`, `WirelessFollowerBridge`,
+`wait_for_follower`, `arm_at_current_pose`, `load_follower_calibration`,
+`FollowerState`, `RejectReason`, `is_newer_sequence`, and all Gate 6 helpers.
+`publish_until_acknowledged` publishes immediately and then at 20 Hz, calls
+`rclpy.spin_once`, fails on stale feedback, wrong session, non-`ACTIVE` state,
+nonzero rejection, non-`0x3f` mask, or increased error counters, and returns
+the acknowledged movement sequence. `require_confirmation` prints the
+power/support warning and accepts only an exact `MOVE` input when `--yes` is
+absent.
 
 - [ ] **Step 4: Run the runner-contract test to verify it passes**
 
@@ -393,7 +495,7 @@ cd /home/linao/so101_lerobot
   --follower-calibration cali/my_follower.json
 ```
 
-Expected: the operator types `MOVE`; only the gripper opens by approximately `0.10 rad`; the process exits 0 and prints its JSON evidence path.
+Expected: the operator types `MOVE`; only the gripper moves in the positive direction by approximately `0.10 rad`; the process exits 0 and prints its JSON evidence path.
 
 - [ ] **Step 3: Apply the physical stop condition**
 
