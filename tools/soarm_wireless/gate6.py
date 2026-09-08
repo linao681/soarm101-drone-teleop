@@ -11,8 +11,12 @@ GRIPPER_DELTA_RAD = 0.10
 POSITION_TOLERANCE_RAD = 0.03
 
 
-class Gate6Failure(RuntimeError):
+class Gate6Error(RuntimeError):
     """A safety or acceptance condition failed during Gate 6."""
+
+
+# Keep the plan's public name while using the Ruff-compliant ``Error`` suffix.
+Gate6Failure = Gate6Error
 
 
 def write_evidence(path: Path, evidence: dict[str, object]) -> None:
@@ -25,7 +29,7 @@ def write_evidence(path: Path, evidence: dict[str, object]) -> None:
 
 def build_target(start: list[float], calibration: dict[str, dict[str, int]]) -> list[float]:
     if len(start) != len(JOINT_NAMES):
-        raise Gate6Failure("expected six starting joint positions")
+        raise Gate6Error("expected six starting joint positions")
 
     target = list(start)
     target[GRIPPER_INDEX] += GRIPPER_DELTA_RAD
@@ -33,19 +37,19 @@ def build_target(start: list[float], calibration: dict[str, dict[str, int]]) -> 
     low = raw_to_radians(gripper_calibration["range_min"])
     high = raw_to_radians(gripper_calibration["range_max"])
     if not low <= target[GRIPPER_INDEX] <= high:
-        raise Gate6Failure("gripper target is outside follower calibration")
+        raise Gate6Error("gripper target is outside follower calibration")
     return target
 
 
 def validate_preflight(status, read_errors: int, write_errors: int) -> None:
     if status.response_mask != 0x3F:
-        raise Gate6Failure(f"servo response mask is 0x{status.response_mask:02x}")
+        raise Gate6Error(f"servo response mask is 0x{status.response_mask:02x}")
     if status.state not in (FollowerState.WAITING_HANDSHAKE, FollowerState.HOLDING_TIMEOUT):
-        raise Gate6Failure(f"follower state is {status.state.name}")
+        raise Gate6Error(f"follower state is {status.state.name}")
     if status.reject_reason is not RejectReason.NONE:
-        raise Gate6Failure(f"follower rejection is {status.reject_reason.name}")
+        raise Gate6Error(f"follower rejection is {status.reject_reason.name}")
     if status.read_errors != read_errors or status.write_errors != write_errors:
-        raise Gate6Failure("bus error counters changed during preflight")
+        raise Gate6Error("bus error counters changed during preflight")
 
 
 def evaluate_completion(
@@ -58,17 +62,17 @@ def evaluate_completion(
     write_errors: int,
 ) -> None:
     if status.session_id != expected_session_id:
-        raise Gate6Failure("follower status belongs to a different session")
+        raise Gate6Error("follower status belongs to a different session")
     if status.response_mask != 0x3F or status.state is not FollowerState.ACTIVE:
-        raise Gate6Failure("follower is not active with all servos online")
+        raise Gate6Error("follower is not active with all servos online")
     if status.reject_reason is not RejectReason.NONE:
-        raise Gate6Failure(f"follower rejection is {status.reject_reason.name}")
+        raise Gate6Error(f"follower rejection is {status.reject_reason.name}")
     if status.read_errors != read_errors or status.write_errors != write_errors:
-        raise Gate6Failure("bus error counters increased")
+        raise Gate6Error("bus error counters increased")
     if measured[GRIPPER_INDEX] - start[GRIPPER_INDEX] <= 0.0:
-        raise Gate6Failure("gripper direction was not positive")
+        raise Gate6Error("gripper direction was not positive")
     if abs(measured[GRIPPER_INDEX] - target[GRIPPER_INDEX]) > POSITION_TOLERANCE_RAD:
-        raise Gate6Failure("gripper did not reach the requested target")
+        raise Gate6Error("gripper did not reach the requested target")
     for index, value in enumerate(measured):
         if index != GRIPPER_INDEX and abs(value - start[index]) > POSITION_TOLERANCE_RAD:
-            raise Gate6Failure(f"unexpected motion on {JOINT_NAMES[index]}")
+            raise Gate6Error(f"unexpected motion on {JOINT_NAMES[index]}")
