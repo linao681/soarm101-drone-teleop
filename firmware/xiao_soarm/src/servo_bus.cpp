@@ -11,20 +11,20 @@ constexpr double kTwoPi = 6.28318530717958647692;
 constexpr double kResolution = 4096.0;
 constexpr uint8_t kLeRobotAcceleration = 254;
 
-// Snapshot from /home/linao/so101_lerobot/cali/follower_recal.json.
+// Snapshot from /home/linao/so101_lerobot/cali/my_follower.json.
 // Present_Position already has
 // Homing_Offset applied by the servo, so angle conversion must not apply the
 // offset a second time. The offsets are retained here for identity/safety
 // checks when write control is enabled.
 constexpr uint8_t kIds[kJointCount] = {1, 2, 3, 4, 5, 6};
 constexpr int16_t kHomingOffsets[kJointCount] = {
-    -1073, -1917, 1029, -81, -940, 311
+    -1100, -1947, 1051, -208, 151, 315
 };
 constexpr int16_t kRangeMin[kJointCount] = {
-    793, 789, 864, 834, 0, 1656
+    839, 798, 814, 947, 0, 1611
 };
 constexpr int16_t kRangeMax[kJointCount] = {
-    3384, 3189, 3135, 3206, 4095, 3189
+    3240, 3235, 3122, 3364, 4095, 3214
 };
 
 SMS_STS servos;
