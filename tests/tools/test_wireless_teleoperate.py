@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import pytest
 from builtin_interfaces.msg import Time
 
-from tools.wireless_teleoperate import WirelessFollowerBridge, update_feedback_recovery
+from tools.wireless_teleoperate import (
+    WirelessFollowerBridge,
+    compute_recovery_target,
+    update_feedback_recovery,
+)
 
 
 class _Publisher:
@@ -63,6 +67,29 @@ def test_feedback_recovery_fails_after_reconnect_window():
             feedback_timeout=0.5,
             recovery_timeout=5.0,
         )
+
+
+def test_recovery_target_catches_up_to_leader_motion_during_outage():
+    calibration = {
+        name: {"id": index, "range_min": 0, "range_max": 4095}
+        for index, name in enumerate(
+            ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"),
+            start=1,
+        )
+    }
+    leader_origin = {f"{name}.pos": 0.0 for name in calibration}
+    current_leader = {f"{name}.pos": 50.0 for name in calibration}
+    follower_origin = [0.0] * 6
+
+    target = compute_recovery_target(
+        current_leader,
+        leader_origin,
+        follower_origin,
+        calibration,
+        mapping_mode="relative",
+    )
+
+    assert all(value > 0.0 for value in target)
 
 
 def test_gate6_runner_requires_confirmation_and_uses_exact_gripper_delta():

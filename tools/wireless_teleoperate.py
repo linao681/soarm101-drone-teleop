@@ -19,7 +19,6 @@ from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from tools.soarm_wireless.control import (
     JOINT_NAMES,
     absolute_target,
-    capture_relative_origins,
     load_follower_calibration,
     relative_target,
 )
@@ -115,6 +114,18 @@ def update_feedback_recovery(
     if now - stale_since > recovery_timeout:
         raise RuntimeError("Follower feedback recovery timed out; command publishing stopped")
     return stale_since
+
+
+def compute_recovery_target(
+    action: dict[str, float],
+    leader_origin: dict[str, float],
+    follower_origin: list[float],
+    follower_calibration: dict[str, dict[str, int]],
+    mapping_mode: str,
+) -> list[float]:
+    if mapping_mode == "relative":
+        return relative_target(action, leader_origin, follower_origin, follower_calibration)
+    return absolute_target(action, follower_calibration)
 
 
 class WirelessFollowerBridge(Node):
@@ -413,12 +424,30 @@ def run() -> None:
                 node.reset_session()
                 follower_start = wait_for_follower(node, timeout=5.0, after_monotonic=previous_feedback)
                 arm_at_current_pose(node, follower_start)
-                leader_origin, follower_origin = capture_relative_origins(
-                    leader.get_action(), follower_start
+                action = leader.get_action()
+                recovery_target = compute_recovery_target(
+                    action,
+                    leader_origin,
+                    follower_origin,
+                    follower_calibration,
+                    args.mapping_mode,
                 )
                 command = list(follower_start)
+                node.set_command_context(action, recovery_target)
+                command = startup_blend(
+                    node,
+                    follower_start,
+                    recovery_target,
+                    args.startup_duration,
+                    args.rate,
+                    args.max_step_rad,
+                    args.feedback_timeout,
+                )
                 next_tick = time.monotonic()
-                print("Follower session recovered with a fresh near-current-pose handshake", flush=True)
+                print(
+                    "Follower session recovered with a fresh handshake and smooth catch-up",
+                    flush=True,
+                )
                 continue
 
             action = leader.get_action()
