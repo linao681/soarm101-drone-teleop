@@ -13,17 +13,17 @@ else
 fi
 BRIDGE="$PROJECT_DIR/tools/wireless_teleoperate.py"
 CALIBRATION_DIR="$PROJECT_DIR/cali"
-FOLLOWER_CALIBRATION="$CALIBRATION_DIR/follower_recal.json"
+FOLLOWER_CALIBRATION="${SOARM_FOLLOWER_CALIBRATION:-$CALIBRATION_DIR/my_follower.json}"
 
 # These values match the WiFi transport compiled into the XIAO firmware.
 EXPECTED_WIFI_SSID="${SOARM_WIFI_SSID:-vivoX100s}"
-EXPECTED_AGENT_IP="${SOARM_AGENT_IP:-10.35.214.21}"
+EXPECTED_AGENT_IP="${SOARM_AGENT_IP:-10.141.235.21}"
 AGENT_PORT="${SOARM_AGENT_PORT:-8888}"
 
 # Use the controller's stable USB identity instead of the changing ttyACM number.
 DEFAULT_LEADER_PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B048657-if00"
 LEADER_PORT="${SOARM_LEADER_PORT:-$DEFAULT_LEADER_PORT}"
-LEADER_ID="${SOARM_LEADER_ID:-leader_recal}"
+LEADER_ID="${SOARM_LEADER_ID:-my_leader}"
 
 AGENT_LOG_DIR="$PROJECT_DIR/logs"
 AGENT_LOG="$AGENT_LOG_DIR/micro_ros_agent.log"
@@ -56,6 +56,22 @@ fail() {
     exit 1
 }
 
+wait_for_topic_message() {
+    local topic="$1"
+    local deadline=$((SECONDS + 15))
+
+    while (( SECONDS < deadline )); do
+        if ros2 topic list 2>/dev/null | grep -Fxq "$topic"; then
+            if timeout 2s ros2 topic echo "$topic" --once >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+
+    return 124
+}
+
 # Hold an advisory lock for the whole run. Two bridge processes reading the
 # same Feetech serial bus can corrupt replies and produce false model numbers.
 exec 9>"/tmp/soarm_wireless_teleop.lock"
@@ -68,12 +84,14 @@ echo "=== SO-ARM101 无线遥操启动 ==="
 [[ -r "$ROS_SETUP" ]] || fail "找不到 ROS2 Humble：$ROS_SETUP"
 [[ -x "$PYTHON" ]] || fail "找不到 lerobot_so101 Python：$PYTHON"
 [[ -f "$BRIDGE" ]] || fail "找不到遥操程序：$BRIDGE"
-[[ -f "$CALIBRATION_DIR/$LEADER_ID.json" ]] || \
-    fail "找不到主臂校准：$CALIBRATION_DIR/$LEADER_ID.json"
 [[ -f "$FOLLOWER_CALIBRATION" ]] || \
     fail "找不到从臂校准：$FOLLOWER_CALIBRATION"
-[[ -e "$LEADER_PORT" ]] || \
-    fail "没有检测到主臂驱动板。请连接普通 USB 舵机驱动板：$LEADER_PORT"
+if ! $CHECK_ONLY; then
+    [[ -f "$CALIBRATION_DIR/$LEADER_ID.json" ]] ||
+        fail "找不到主臂校准：$CALIBRATION_DIR/$LEADER_ID.json"
+    [[ -e "$LEADER_PORT" ]] ||
+        fail "没有检测到主臂驱动板。请连接普通 USB 舵机驱动板：$LEADER_PORT"
+fi
 
 WIFI_DEVICE="$(
     nmcli -t -f DEVICE,TYPE,STATE device status |
@@ -93,7 +111,11 @@ CURRENT_IP="$(
     fail "电脑当前 IP 是 '$CURRENT_IP'，XIAO 固件需要 '$EXPECTED_AGENT_IP'"
 
 echo "[1/4] 网络正常：$CURRENT_SSID，电脑 IP $CURRENT_IP"
-echo "[2/4] 主臂驱动板：$LEADER_PORT -> $(readlink -f "$LEADER_PORT")"
+if $CHECK_ONLY; then
+    echo "[2/4] --check 模式：跳过主臂硬件检查"
+else
+    echo "[2/4] 主臂驱动板：$LEADER_PORT -> $(readlink -f "$LEADER_PORT")"
+fi
 
 # ROS setup files legitimately probe optional unset variables, so temporarily
 # relax nounset while sourcing them and restore strict mode immediately after.
@@ -116,18 +138,20 @@ else
 fi
 
 echo "[4/4] 等待无线从臂上线……"
-if ! timeout 15s ros2 topic echo /joint_states --once >/dev/null 2>&1; then
+if ! wait_for_topic_message /joint_states; then
     fail "15 秒内没有收到 /joint_states。请检查从臂 5V 电源、XIAO 天线和手机热点"
 fi
-if ! timeout 15s ros2 topic echo /follower_status --once >/dev/null 2>&1; then
+if ! wait_for_topic_message /follower_status; then
     fail "收到关节状态，但没有 /follower_status；请确认 XIAO 已烧录可靠性固件"
 fi
-echo "预检通过：主臂、从臂、WiFi、micro-ROS 和从臂状态反馈均已就绪"
 
 if $CHECK_ONLY; then
+    echo "预检通过：从臂 WiFi、micro-ROS 和状态反馈均已就绪；未检查主臂"
     echo "--check 完成，未启动舵机遥操"
     exit 0
 fi
+
+echo "预检通过：主臂、从臂、WiFi、micro-ROS 和从臂状态反馈均已就绪"
 
 echo
 echo "本次指标日志：$METRICS_LOG"
@@ -135,7 +159,7 @@ echo "即将从双方当前位置无跳变启动，按 Ctrl+C 停止。"
 echo "从臂停止后会保持最后位置。"
 echo
 
-"$PYTHON" "$BRIDGE" \
+PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$BRIDGE" \
     --leader-port "$LEADER_PORT" \
     --leader-id "$LEADER_ID" \
     --calibration-dir "$CALIBRATION_DIR" \
