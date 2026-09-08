@@ -29,6 +29,7 @@ AGENT_LOG_DIR="$PROJECT_DIR/logs"
 AGENT_LOG="$AGENT_LOG_DIR/micro_ros_agent.log"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 METRICS_LOG="$AGENT_LOG_DIR/teleop_${RUN_ID}.csv"
+RECOVERY_TIMEOUT="${SOARM_RECOVERY_TIMEOUT:-15}"
 STARTED_AGENT_PID=""
 CHECK_ONLY=false
 
@@ -167,4 +168,5 @@ PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$BRIDGE" \
     --mapping-mode relative \
     --rate 30 \
     --max-step-rad 0.24 \
+    --recovery-timeout "$RECOVERY_TIMEOUT" \
     --metrics-csv "$METRICS_LOG"

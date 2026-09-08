@@ -24,6 +24,13 @@ def test_wireless_launcher_waits_for_topics_before_echoing_them():
     assert "ros2 topic list" in launcher
 
 
+def test_wireless_launcher_allows_wifi_recovery_window_override():
+    launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
+
+    assert 'RECOVERY_TIMEOUT="${SOARM_RECOVERY_TIMEOUT:-15}"' in launcher
+    assert '    --recovery-timeout "$RECOVERY_TIMEOUT" \\' in launcher
+
+
 def test_check_mode_does_not_require_leader_hardware():
     launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
 
