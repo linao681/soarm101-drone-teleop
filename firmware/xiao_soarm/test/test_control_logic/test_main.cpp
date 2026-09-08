@@ -71,6 +71,18 @@ void test_trajectory_obeys_velocity_limit() {
     }
 }
 
+void test_summer_profile_applies_host_step_in_one_tick() {
+    Controller controller = active_controller_at_zero(7);
+    controller.on_command(command(7, 2, filled(0.24)), zeros(), true, 0);
+
+    const Output output = controller.tick(20, zeros(), true);
+
+    for (size_t joint = 0; joint < kJointCount; ++joint) {
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.24f, static_cast<float>(output.applied_target[joint]));
+        TEST_ASSERT_TRUE(output.should_write);
+    }
+}
+
 void test_bus_fault_prevents_writes() {
     Controller controller = active_controller_at_zero(7);
     const Output output = controller.tick(20, zeros(), false);
@@ -85,6 +97,7 @@ int main() {
     RUN_TEST(test_out_of_order_command_is_rejected);
     RUN_TEST(test_timeout_holds_and_requires_new_handshake);
     RUN_TEST(test_trajectory_obeys_velocity_limit);
+    RUN_TEST(test_summer_profile_applies_host_step_in_one_tick);
     RUN_TEST(test_bus_fault_prevents_writes);
     return UNITY_END();
 }

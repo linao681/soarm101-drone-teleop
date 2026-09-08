@@ -9,7 +9,9 @@ namespace control_logic {
 constexpr size_t kJointCount = 6;
 constexpr uint32_t kCommandTimeoutMs = 500;
 constexpr double kHandshakeToleranceRad = 0.05;
-constexpr double kMaxVelocityRadS[kJointCount] = {0.8, 0.8, 0.8, 1.2, 1.5, 1.5};
+constexpr double kMaxVelocityRadS[kJointCount] = {
+    12.0, 12.0, 12.0, 12.0, 12.0, 12.0
+};
 
 enum State : int32_t {
     WAITING_HANDSHAKE = 0,

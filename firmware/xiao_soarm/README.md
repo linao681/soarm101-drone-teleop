@@ -48,7 +48,8 @@ micro-ROS 静态库位于 `lib/microros/`，ESP32-C3 使用 `riscv32` 工具链�
 /follower_status std_msgs/msg/Int32MultiArray 可靠性状态，约20 Hz，固定14字段
 ```
 
-首次控制命令必须接近从臂当前回读姿态，之后固件会检查校准软限位和单次步进
-上限。控制 tick 为 50 Hz，首次握手容差为 0.05 rad，通信超时 500 ms 后保持最后目标位置。
+首次控制命令必须接近从臂当前回读姿态，之后固件会检查校准软限位。控制 tick 为 50 Hz，
+六个关节的轨迹上限均为 12.0 rad/s，对应每个 20 ms tick 最多前进 0.24 rad；
+通信超时 500 ms 后保持最后目标位置。
 停止桥接程序不会清除最后目标；物理紧急停止是移除舵机电源。完整状态码和分阶段
 测试矩阵见 `../../docs/soarm_wireless_test_matrix.md`。
