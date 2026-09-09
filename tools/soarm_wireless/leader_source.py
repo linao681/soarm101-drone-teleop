@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
-import time
 
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Int32MultiArray
@@ -53,6 +53,10 @@ class WiredLeaderSource:
     def boot_session_id(self) -> None:
         return None
 
+    @property
+    def sample_metadata(self) -> None:
+        return None
+
     def connect(self) -> None:
         self._leader.connect(calibrate=False)
         if not self._leader.is_calibrated:
@@ -100,6 +104,25 @@ class WirelessLeaderSource:
     def boot_session_id(self) -> int | None:
         sample = self._tracker.sample
         return None if sample is None else sample.boot_session_id
+
+    @property
+    def sample_metadata(self) -> dict[str, int | float] | None:
+        sample = self._tracker.sample
+        status = self._tracker.status
+        if sample is None or status is None:
+            return None
+        return {
+            "boot_session_id": sample.boot_session_id,
+            "sequence": sample.sequence,
+            "received_at": sample.received_at,
+            "response_mask": status.response_mask,
+            "model_mask": status.model_match_mask,
+            "torque_off_mask": status.torque_off_mask,
+            "calibration_crc32": status.calibration_crc32,
+            "read_errors": status.read_errors,
+            "torque_errors": status.torque_errors,
+            "rssi_dbm": status.rssi_dbm,
+        }
 
     @property
     def last_error(self) -> str:
@@ -225,6 +248,10 @@ class WirelessLeaderTracker:
     @property
     def sample(self) -> LeaderSample | None:
         return self._sample
+
+    @property
+    def status(self) -> LeaderStatus | None:
+        return self._status
 
     def reset(self) -> None:
         self._status: LeaderStatus | None = None

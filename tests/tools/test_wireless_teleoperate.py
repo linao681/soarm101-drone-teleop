@@ -6,6 +6,7 @@ from builtin_interfaces.msg import Time
 
 import tools.wireless_teleoperate as teleoperate
 from tools.soarm_wireless.leader_source import LeaderUnavailable
+from tools.soarm_wireless.protocol import FollowerStatus
 from tools.wireless_teleoperate import (
     WirelessFollowerBridge,
     compute_recovery_target,
@@ -374,6 +375,105 @@ def test_recovery_blend_stops_publishing_after_a_later_leader_outage(monkeypatch
         )
 
     assert len(node.publish_calls) == 1
+
+
+def test_recovery_handshake_does_not_bind_pending_sample_before_first_live_command(
+    monkeypatch,
+):
+    action = {f"{name}.pos": 0.0 for name in teleoperate.JOINT_NAMES}
+    calibration = {
+        name: {"id": index, "range_min": 0, "range_max": 4095}
+        for index, name in enumerate(teleoperate.JOINT_NAMES, start=1)
+    }
+
+    bridge = object.__new__(WirelessFollowerBridge)
+    bridge.session_id = 7
+    bridge.next_sequence = 11
+    bridge.last_command_sequence = 0
+    bridge.command_send_times = {}
+    bridge.command_leader_samples = {}
+    bridge.command_control_chain_ack_latencies = {}
+    bridge.previous_leader_sample_key = None
+    bridge.previous_leader_sample_received_at = None
+    bridge.leader_recovery_count = 0
+    bridge.pending_leader_sample = {
+        "boot_session_id": 1,
+        "sequence": 99,
+        "received_at": 10.0,
+    }
+    bridge.latest_leader_sample = bridge.pending_leader_sample.copy()
+    bridge.publisher = _Publisher()
+    bridge.get_clock = lambda: _Clock()
+
+    class Source:
+        sample_metadata = {
+            "boot_session_id": 2,
+            "sequence": 1,
+            "received_at": 20.0,
+        }
+
+        def get_action(self, now):
+            return action
+
+    source = Source()
+
+    monkeypatch.setattr(teleoperate, "wait_for_follower", lambda *args, **kwargs: [0.0] * 6)
+    monkeypatch.setattr(teleoperate, "arm_at_current_pose", lambda node, pose: node.publish_command(pose))
+    monkeypatch.setattr(
+        teleoperate,
+        "startup_blend",
+        lambda node, start, target, *args, **kwargs: (node.publish_command(target), target)[1],
+    )
+    monkeypatch.setattr(teleoperate.time, "monotonic", lambda: 20.1)
+
+    recover_leader_session(
+        node=bridge,
+        leader_source=source,
+        now=20.0,
+        leader_origin={f"{name}.pos": 0.0 for name in teleoperate.JOINT_NAMES},
+        follower_origin=[0.0] * 6,
+        follower_calibration=calibration,
+        mapping_mode="relative",
+        recovery_blend_duration=1.0,
+        rate=30.0,
+        max_step=0.24,
+        feedback_timeout=0.5,
+    )
+
+    assert bridge.command_leader_samples[(bridge.session_id, 2)]["sequence"] == 1
+    assert (bridge.session_id, 1) not in bridge.command_leader_samples
+
+
+def test_foreign_follower_status_does_not_write_leader_sample_or_chain_fields(monkeypatch):
+    bridge = object.__new__(WirelessFollowerBridge)
+    bridge.session_id = 7
+    bridge.command_leader_samples = {
+        (7, 4): {"boot_session_id": 9, "sequence": 100, "received_at": 10.0}
+    }
+    bridge.command_control_chain_ack_latencies = {(7, 4): 82.0}
+    bridge.last_ack_latency_ms = 41.0
+    bridge.latest_leader_sample = bridge.command_leader_samples[(7, 4)]
+    bridge.latest_leader = [0.0] * 6
+    bridge.latest_target = [0.0] * 6
+    bridge.latest_positions = [0.1] * 6
+    bridge.last_command_sequence = 4
+    bridge.leader_recovery_count = 0
+    bridge.metrics_writer = SimpleNamespace(rows=[], write=lambda row: bridge.metrics_writer.rows.append(row))
+    bridge.last_logged_status_monotonic = 10.0
+    monkeypatch.setattr("tools.wireless_teleoperate.time.monotonic", lambda: 11.0)
+
+    bridge.latest_status = FollowerStatus.from_array(
+        [1, 1, 7, 4, 4, 9999, 63, 0, 0, 0, 0, 0, 0, -48]
+    )
+    bridge.latest_status_monotonic = 10.0
+    bridge._status_callback(
+        SimpleNamespace(data=[1, 1, 8, 4, 4, 9999, 63, 0, 0, 0, 0, 0, 0, -48])
+    )
+    bridge.log_latest_status()
+
+    assert bridge.latest_status.session_id == 7
+    assert bridge.latest_status_monotonic == 10.0
+    assert bridge.metrics_writer.rows == []
 
 
 def test_gate6_runner_requires_confirmation_and_uses_exact_gripper_delta():

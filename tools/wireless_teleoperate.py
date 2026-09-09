@@ -159,6 +159,12 @@ def compute_recovery_target(
     return absolute_target(action, follower_calibration)
 
 
+def update_leader_sample_context(node: WirelessFollowerBridge, leader_source, now: float) -> None:
+    setter = getattr(node, "set_leader_sample", None)
+    if callable(setter):
+        setter(getattr(leader_source, "sample_metadata", None), now=now)
+
+
 def build_leader_source(args: argparse.Namespace, node) -> WiredLeaderSource | WirelessLeaderSource:
     if args.leader_mode == "wireless":
         calibration_path = args.calibration_dir / f"{args.leader_id}.json"
@@ -197,6 +203,7 @@ def forward_leader_command(
     )
     command = limit_step(command, desired, max_step)
     node.set_command_context(action, command)
+    update_leader_sample_context(node, leader_source, now)
     node.publish_command(command)
     return command, action, True
 
@@ -230,6 +237,7 @@ def recover_leader_session(
         mapping_mode,
     )
     node.set_command_context(action, recovery_target)
+    update_leader_sample_context(node, leader_source, time.monotonic())
     return startup_blend(
         node,
         follower_start,
@@ -258,11 +266,19 @@ class WirelessFollowerBridge(Node):
         self.session_id = secrets.randbits(32)
         self.next_sequence = 1
         self.command_send_times: dict[int, float] = {}
+        self.command_leader_samples: dict[tuple[int, int], dict[str, int | float]] = {}
+        self.command_control_chain_ack_latencies: dict[tuple[int, int], float] = {}
         self.last_ack_latency_ms: float | None = None
+        self.last_control_chain_ack_latency_ms: float | None = None
         self.metrics_writer: MetricsWriter | None = None
         self.last_logged_status_monotonic = 0.0
         self.latest_leader: list[float] | None = None
         self.latest_target: list[float] | None = None
+        self.latest_leader_sample: dict[str, int | float] | None = None
+        self.pending_leader_sample: dict[str, int | float] | None = None
+        self.previous_leader_sample_key: tuple[int, int] | None = None
+        self.previous_leader_sample_received_at: float | None = None
+        self.leader_recovery_count = 0
         self.last_command_sequence = 0
         self.create_subscription(JointState, "/joint_states", self._state_callback, qos)
         self.create_subscription(Int32MultiArray, "/follower_status", self._status_callback, qos)
@@ -282,18 +298,35 @@ class WirelessFollowerBridge(Node):
             status = FollowerStatus.from_array(list(message.data))
         except ValueError:
             return
+        if not status_matches_session(status, self.session_id):
+            return
         self.latest_status = status
-        self.latest_status_monotonic = time.monotonic()
-        if status_matches_session(status, self.session_id):
-            send_time = self.command_send_times.pop(status.last_applied_sequence, None)
-            if send_time is not None:
-                self.last_ack_latency_ms = (time.monotonic() - send_time) * 1000.0
+        received_at = time.monotonic()
+        self.latest_status_monotonic = received_at
+        send_time = self.command_send_times.pop(status.last_applied_sequence, None)
+        if send_time is not None:
+            self.last_ack_latency_ms = (received_at - send_time) * 1000.0
+        command_key = (status.session_id, status.last_applied_sequence)
+        leader_sample = self.command_leader_samples.get(command_key)
+        if (
+            leader_sample is not None
+            and command_key not in self.command_control_chain_ack_latencies
+        ):
+            latency_ms = (
+                received_at - float(leader_sample["received_at"])
+            ) * 1000.0
+            self.last_control_chain_ack_latency_ms = latency_ms
+            self.command_control_chain_ack_latencies[command_key] = latency_ms
 
     def reset_session(self) -> None:
         self.session_id = secrets.randbits(32)
         self.next_sequence = 1
         self.command_send_times.clear()
+        self.command_leader_samples.clear()
+        self.command_control_chain_ack_latencies.clear()
+        self.pending_leader_sample = None
         self.last_ack_latency_ms = None
+        self.last_control_chain_ack_latency_ms = None
 
     def set_metrics_writer(self, writer: MetricsWriter | None) -> None:
         self.metrics_writer = writer
@@ -301,6 +334,43 @@ class WirelessFollowerBridge(Node):
     def set_command_context(self, leader_action: dict[str, float], target: list[float]) -> None:
         self.latest_leader = [float(leader_action[f"{name}.pos"]) for name in JOINT_NAMES]
         self.latest_target = list(target)
+
+    def set_leader_sample(
+        self, metadata: dict[str, int | float] | None, *, now: float
+    ) -> None:
+        if metadata is None:
+            self.pending_leader_sample = None
+            return
+        sample = dict(metadata)
+        session_id = int(sample["boot_session_id"])
+        sequence = int(sample["sequence"])
+        received_at = float(sample["received_at"])
+        sample["sample_age_ms"] = max(0.0, (now - received_at) * 1000.0)
+        if self.previous_leader_sample_key == (session_id, sequence):
+            sample["sample_gap_ms"] = (
+                self.latest_leader_sample.get("sample_gap_ms", "")
+                if self.latest_leader_sample
+                else ""
+            )
+        else:
+            if (
+                self.previous_leader_sample_key is not None
+                and self.previous_leader_sample_key[0] != session_id
+            ):
+                self.leader_recovery_count += 1
+            sample["sample_gap_ms"] = (
+                (received_at - self.previous_leader_sample_received_at) * 1000.0
+                if (
+                    self.previous_leader_sample_received_at is not None
+                    and self.previous_leader_sample_key is not None
+                    and self.previous_leader_sample_key[0] == session_id
+                )
+                else ""
+            )
+            self.previous_leader_sample_key = (session_id, sequence)
+            self.previous_leader_sample_received_at = received_at
+        self.latest_leader_sample = sample
+        self.pending_leader_sample = sample
 
     def log_latest_status(self) -> None:
         status = self.latest_status
@@ -311,9 +381,21 @@ class WirelessFollowerBridge(Node):
             or timestamp <= self.last_logged_status_monotonic
         ):
             return
+        if not status_matches_session(status, self.session_id):
+            return
         measured = self.latest_positions or [""] * len(JOINT_NAMES)
         leader = self.latest_leader or [""] * len(JOINT_NAMES)
         target = self.latest_target or [""] * len(JOINT_NAMES)
+        owns_status = status_matches_session(status, self.session_id)
+        command_key = (status.session_id, status.last_applied_sequence)
+        leader_sample = (
+            self.command_leader_samples.get(command_key) if owns_status else None
+        ) or {}
+        control_chain_ack_latency = (
+            self.command_control_chain_ack_latencies.get(command_key, "")
+            if owns_status
+            else ""
+        )
         row: dict[str, object] = {
             "host_monotonic_s": timestamp,
             "session_id": status.session_id,
@@ -329,6 +411,19 @@ class WirelessFollowerBridge(Node):
             ),
             "rssi_dbm": status.rssi_dbm,
             "response_mask": status.response_mask,
+            "leader_boot_session_id": leader_sample.get("boot_session_id", ""),
+            "leader_sample_sequence": leader_sample.get("sequence", ""),
+            "leader_sample_gap_ms": leader_sample.get("sample_gap_ms", ""),
+            "leader_sample_age_ms": leader_sample.get("sample_age_ms", ""),
+            "leader_response_mask": leader_sample.get("response_mask", ""),
+            "leader_model_mask": leader_sample.get("model_mask", ""),
+            "leader_torque_off_mask": leader_sample.get("torque_off_mask", ""),
+            "leader_calibration_crc32": leader_sample.get("calibration_crc32", ""),
+            "leader_read_errors": leader_sample.get("read_errors", ""),
+            "leader_torque_errors": leader_sample.get("torque_errors", ""),
+            "leader_rssi_dbm": leader_sample.get("rssi_dbm", ""),
+            "leader_recovery_count": self.leader_recovery_count if leader_sample else "",
+            "control_chain_ack_latency_ms": control_chain_ack_latency,
         }
         row.update({f"leader_{index}": value for index, value in enumerate(leader)})
         row.update({f"target_{index}": value for index, value in enumerate(target)})
@@ -346,9 +441,20 @@ class WirelessFollowerBridge(Node):
         message.position = positions
         self.publisher.publish(message)
         self.last_command_sequence = sequence
-        self.command_send_times[sequence] = time.monotonic()
+        sent_at = time.monotonic()
+        self.command_send_times[sequence] = sent_at
+        pending_leader_sample = getattr(self, "pending_leader_sample", None)
+        if pending_leader_sample is not None:
+            command_leader_samples = getattr(self, "command_leader_samples", None)
+            if command_leader_samples is None:
+                command_leader_samples = self.command_leader_samples = {}
+            command_leader_samples[(self.session_id, sequence)] = dict(pending_leader_sample)
         while len(self.command_send_times) > 256:
-            self.command_send_times.pop(next(iter(self.command_send_times)))
+            old_sequence = next(iter(self.command_send_times))
+            self.command_send_times.pop(old_sequence)
+            command_key = (self.session_id, old_sequence)
+            getattr(self, "command_leader_samples", {}).pop(command_key, None)
+            getattr(self, "command_control_chain_ack_latencies", {}).pop(command_key, None)
         return sequence
 
     def owns_active_status(self) -> bool:
@@ -443,7 +549,11 @@ def startup_blend(
         rclpy.spin_once(node, timeout_sec=0.0)
         node.log_latest_status()
         if leader_source is not None:
-            leader_source.get_action(time.monotonic())
+            now = time.monotonic()
+            leader_source.get_action(now)
+            update_leader_sample_context(node, leader_source, now)
+        else:
+            node.set_leader_sample(None, now=time.monotonic())
         if time.monotonic() - node.latest_monotonic > feedback_timeout:
             raise RuntimeError("Follower feedback timed out during startup synchronization")
         if node.latest_status is not None and status_matches_session(
@@ -513,6 +623,7 @@ def run() -> None:
         else:
             initial_target = absolute_target(leader_origin, follower_calibration)
         node.set_command_context(leader_origin, initial_target)
+        update_leader_sample_context(node, leader_source, time.monotonic())
         command = startup_blend(
             node,
             follower_start,
@@ -631,6 +742,7 @@ def run() -> None:
                 desired = absolute_target(action, follower_calibration)
             command = limit_step(command, desired, args.max_step_rad)
             node.set_command_context(action, command)
+            update_leader_sample_context(node, leader_source, now)
             node.publish_command(command)
 
             if now - last_report >= 1.0:

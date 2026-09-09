@@ -35,6 +35,19 @@ METRICS_HEADER = [
     "measured_3",
     "measured_4",
     "measured_5",
+    "leader_boot_session_id",
+    "leader_sample_sequence",
+    "leader_sample_gap_ms",
+    "leader_sample_age_ms",
+    "leader_response_mask",
+    "leader_model_mask",
+    "leader_torque_off_mask",
+    "leader_calibration_crc32",
+    "leader_read_errors",
+    "leader_torque_errors",
+    "leader_rssi_dbm",
+    "leader_recovery_count",
+    "control_chain_ack_latency_ms",
 ]
 
 
@@ -113,6 +126,36 @@ def summarize_rows(rows: Iterable[Mapping[str, object]]) -> dict[str, float | in
     ack_latencies = [
         value for row in rows if (value := _float(row, "ack_latency_ms")) is not None
     ]
+    control_chain_ack_latencies = [
+        value
+        for row in rows
+        if (value := _float(row, "control_chain_ack_latency_ms")) is not None
+    ]
+    leader_sample_gaps: list[float] = []
+    leader_recovery_values = [
+        value
+        for row in rows
+        if (value := _int(row, "leader_recovery_count")) is not None and value >= 0
+    ]
+    leader_sessions: list[int] = []
+    seen_leader_samples: set[tuple[int, int]] = set()
+    previous_leader_session: int | None = None
+    for row in rows:
+        session = _int(row, "leader_boot_session_id")
+        sequence = _int(row, "leader_sample_sequence")
+        if session is None or sequence is None:
+            continue
+        sample_key = (session, sequence)
+        if sample_key in seen_leader_samples:
+            continue
+        seen_leader_samples.add(sample_key)
+        leader_sessions.append(session)
+        gap = _float(row, "leader_sample_gap_ms")
+        if gap is not None and gap >= 0.0 and (
+            previous_leader_session is None or session == previous_leader_session
+        ):
+            leader_sample_gaps.append(gap)
+        previous_leader_session = session
     rssi_values = [value for row in rows if (value := _float(row, "rssi_dbm")) is not None]
 
     summary: dict[str, float | int] = {
@@ -127,6 +170,12 @@ def summarize_rows(rows: Iterable[Mapping[str, object]]) -> dict[str, float | in
         "ack_latency_p50_ms": 0.0,
         "ack_latency_p95_ms": 0.0,
         "ack_latency_p99_ms": 0.0,
+        "control_chain_ack_latency_p50_ms": 0.0,
+        "control_chain_ack_latency_p95_ms": 0.0,
+        "control_chain_ack_latency_p99_ms": 0.0,
+        "leader_sample_rate_hz": 0.0,
+        "leader_max_sample_gap_ms": 0.0,
+        "leader_recovery_count": 0,
         "minimum_rssi_dbm": min(rssi_values) if rssi_values else 0.0,
         "timeout_count": sum(_int(row, "state") == 2 for row in rows),
         "rejections_total": sum(
@@ -151,6 +200,31 @@ def summarize_rows(rows: Iterable[Mapping[str, object]]) -> dict[str, float | in
         summary["ack_latency_p50_ms"] = _nearest_rank(ack_latencies, 0.50)
         summary["ack_latency_p95_ms"] = _nearest_rank(ack_latencies, 0.95)
         summary["ack_latency_p99_ms"] = _nearest_rank(ack_latencies, 0.99)
+    if control_chain_ack_latencies:
+        summary["control_chain_ack_latency_p50_ms"] = _nearest_rank(
+            control_chain_ack_latencies, 0.50
+        )
+        summary["control_chain_ack_latency_p95_ms"] = _nearest_rank(
+            control_chain_ack_latencies, 0.95
+        )
+        summary["control_chain_ack_latency_p99_ms"] = _nearest_rank(
+            control_chain_ack_latencies, 0.99
+        )
+    if leader_sample_gaps:
+        summary["leader_sample_rate_hz"] = 1000.0 / (
+            sum(leader_sample_gaps) / len(leader_sample_gaps)
+        ) if sum(leader_sample_gaps) else 0.0
+        summary["leader_max_sample_gap_ms"] = max(leader_sample_gaps)
+    if leader_recovery_values:
+        summary["leader_recovery_count"] = max(leader_recovery_values)
+    if len(leader_sessions) >= 2:
+        summary["leader_recovery_count"] = max(
+            int(summary["leader_recovery_count"]),
+            sum(
+                current != previous
+                for previous, current in zip(leader_sessions, leader_sessions[1:], strict=False)
+            ),
+        )
 
     squared_errors: list[float] = []
     for joint in range(6):
