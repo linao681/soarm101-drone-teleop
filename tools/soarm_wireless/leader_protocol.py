@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import json
-import math
 import struct
 import zlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -104,26 +103,44 @@ class LeaderStatus:
         )
 
 
-def _validate_calibration(calibration: dict) -> dict[str, dict[str, int]]:
+def _validate_calibration(calibration: Mapping) -> Mapping[str, Mapping[str, int]]:
+    if not isinstance(calibration, Mapping):
+        raise ValueError("Leader calibration must be a mapping")
     if tuple(calibration) != JOINT_NAMES:
         raise ValueError(
             f"Unexpected joints in calibration: {list(calibration)}; expected {list(JOINT_NAMES)}"
         )
     for expected_id, name in enumerate(JOINT_NAMES, start=1):
         values = calibration[name]
-        if values.get("id") != expected_id:
-            raise ValueError(f"{name} has ID {values.get('id')}, expected {expected_id}")
+        if not isinstance(values, Mapping):
+            raise ValueError(f"Calibration entry for {name} must be a mapping")
         try:
-            homing_offset = int(values["homing_offset"])
-            range_min = int(values["range_min"])
-            range_max = int(values["range_max"])
-        except (KeyError, TypeError, ValueError) as error:
+            motor_id = values["id"]
+            homing_offset = values["homing_offset"]
+            range_min = values["range_min"]
+            range_max = values["range_max"]
+        except KeyError as error:
             raise ValueError(f"Invalid calibration values for {name}: {values}") from error
-        if not all(math.isfinite(float(value)) for value in (homing_offset, range_min, range_max)):
-            raise ValueError(f"Non-finite calibration values for {name}: {values}")
+        for field, value in (
+            ("id", motor_id),
+            ("homing_offset", homing_offset),
+            ("range_min", range_min),
+            ("range_max", range_max),
+        ):
+            if type(value) is not int:
+                raise ValueError(f"Calibration {name}.{field} must be an integer: {value!r}")
+        if motor_id != expected_id:
+            raise ValueError(f"{name} has ID {motor_id}, expected {expected_id}")
+        if not 0 <= motor_id <= 0xFF:
+            raise ValueError(f"Calibration {name}.id is not representable: {motor_id}")
+        if not -0x8000 <= homing_offset <= 0x7FFF:
+            raise ValueError(f"Calibration {name}.homing_offset is not representable: {homing_offset}")
+        if not 0 <= range_min <= 0xFFFF or not 0 <= range_max <= 0xFFFF:
+            raise ValueError(f"Calibration {name} range is not representable: {range_min}, {range_max}")
         if range_min >= range_max:
             raise ValueError(f"Invalid range for {name}: {values}")
-        if values.get("drive_mode", 0) not in (0, 1):
+        drive_mode = values.get("drive_mode", 0)
+        if type(drive_mode) is not int or drive_mode not in (0, 1):
             raise ValueError(f"Unsupported drive_mode for {name}: {values.get('drive_mode')}")
     return calibration
 

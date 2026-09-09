@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -58,3 +59,27 @@ def test_loader_rejects_wrong_ids(tmp_path: Path):
     path.write_text('{"shoulder_pan":{"id":6}}')
     with pytest.raises(ValueError, match="joints|ID"):
         load_leader_calibration(path)
+
+
+def test_loader_rejects_non_mapping_joint_entry(tmp_path: Path):
+    path = tmp_path / "leader.json"
+    calibration = dict(CALIBRATION)
+    calibration["elbow_flex"] = []
+    path.write_text(json.dumps(calibration))
+    with pytest.raises(ValueError, match="mapping|elbow_flex"):
+        load_leader_calibration(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("homing_offset", 1084.5),
+        ("range_min", -1),
+        ("range_max", 65536),
+    ],
+)
+def test_crc_rejects_non_integral_or_unrepresentable_calibration(field: str, value):
+    calibration = dict(CALIBRATION)
+    calibration["shoulder_pan"] = {**CALIBRATION["shoulder_pan"], field: value}
+    with pytest.raises(ValueError, match="integer|representable|range"):
+        leader_calibration_crc32(calibration)
