@@ -7,14 +7,20 @@
 #include <sensor_msgs/msg/joint_state.h>
 #include <std_msgs/msg/int32_multi_array.h>
 
+#if __has_include("wifi_config.h")
 #include "wifi_config.h"
+#else
+#include "wifi_config.example.h"
+#endif
 #include "control_logic.h"
+#include "agent_discovery.h"
 #include "servo_bus.h"
 
 extern "C" void arduino_wifi_transport_dump_trace();
 
-const uint16_t AGENT_PORT = 8888;
 const unsigned long WIFI_RESTART_TIMEOUT_MS = 10000;
+constexpr unsigned long AGENT_LIVENESS_PERIOD_MS = 1000;
+constexpr uint8_t AGENT_LIVENESS_FAILURE_LIMIT = 3;
 
 rcl_publisher_t state_pub;
 rcl_publisher_t status_pub;
@@ -270,12 +276,19 @@ void setup() {
     Serial.printf("\nIP: %s  RSSI: %d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     delay(3000);
 
+    const agent_discovery::Agent agent = agent_discovery::discover();
+    char agent_host[16] = {};
+    const String agent_ip_text = agent.ip.toString();
+    agent_ip_text.toCharArray(agent_host, sizeof(agent_host));
+    const uint16_t agent_port = agent.port;
+    Serial.printf("Agent: %s:%u\n", agent_host, static_cast<unsigned>(agent_port));
+
     initialize_joint_messages();
 
     // micro-ROS: wait for the Agent before allocating entities. Retrying a
     // partially initialized rclc stack leaks scarce ESP32-C3 memory.
     set_microros_wifi_transports(
-        (char*)WIFI_SSID, (char*)WIFI_PASS, (char*)AGENT_IP, AGENT_PORT);
+        (char*)WIFI_SSID, (char*)WIFI_PASS, agent_host, agent_port);
     while (rmw_uros_ping_agent(500, 1) != RMW_RET_OK) {
         Serial.println("Waiting for micro-ROS Agent...");
         delay(1000);
@@ -324,11 +337,16 @@ void setup() {
     unsigned long last_status = millis();
     unsigned long last_diagnostics = millis();
     unsigned long wifi_lost_since = 0;
+    unsigned long last_agent_liveness_ms = millis();
+    uint8_t agent_liveness_failures = 0;
     while (true) {
         rcl_ret_t spin_rc = rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
         if (spin_rc != RCL_RET_OK && spin_rc != RCL_RET_TIMEOUT) {
             spin_error_count++;
             rcl_reset_error();
+            Serial.println("micro-ROS Agent lost; restarting for rediscovery.");
+            delay(100);
+            ESP.restart();
         }
         if (millis() - last_servo_read >= 50) {
             last_servo_read += 50;
@@ -371,6 +389,22 @@ void setup() {
         if (millis() - last_diagnostics >= 60000) {
             last_diagnostics += 60000;
             servo_calibration_ok = print_servo_diagnostics();
+        }
+        if (millis() - last_agent_liveness_ms >= AGENT_LIVENESS_PERIOD_MS) {
+            last_agent_liveness_ms += AGENT_LIVENESS_PERIOD_MS;
+            if (rmw_uros_ping_agent(10, 1) == RMW_RET_OK) {
+                agent_liveness_failures = 0;
+            } else {
+                agent_liveness_failures++;
+                Serial.printf("micro-ROS Agent liveness failure %u/%u\n",
+                    static_cast<unsigned>(agent_liveness_failures),
+                    static_cast<unsigned>(AGENT_LIVENESS_FAILURE_LIMIT));
+                if (agent_liveness_failures >= AGENT_LIVENESS_FAILURE_LIMIT) {
+                    Serial.println("micro-ROS Agent liveness failed; restarting for rediscovery.");
+                    delay(100);
+                    ESP.restart();
+                }
+            }
         }
         delay(1);
         if (WiFi.status() != WL_CONNECTED) {

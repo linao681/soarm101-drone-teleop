@@ -22,6 +22,34 @@ def test_firmware_allocates_two_publishers():
     assert "-DRMW_UXRCE_MAX_PUBLISHERS=2" in source
 
 
+def test_follower_discovers_agent_endpoint_without_fixed_ip():
+    source = MAIN_CPP.read_text()
+
+    assert '#include "agent_discovery.h"' in source
+    assert re.search(
+        r"agent_discovery::Agent\s+agent\s*=\s*agent_discovery::discover\(\)",
+        source,
+    )
+    assert re.search(
+        r"set_microros_wifi_transports\([\s\S]*agent_host[\s\S]*agent_port",
+        source,
+    )
+    assert "AGENT_IP" not in source
+
+
+def test_follower_checks_agent_liveness_without_using_executor_timeout():
+    source = MAIN_CPP.read_text()
+
+    assert "constexpr unsigned long AGENT_LIVENESS_PERIOD_MS = 1000;" in source
+    assert "constexpr uint8_t AGENT_LIVENESS_FAILURE_LIMIT = 3;" in source
+    assert "last_agent_liveness_ms" in source
+    assert "agent_liveness_failures" in source
+    assert "rmw_uros_ping_agent(10, 1)" in source
+    assert "agent_liveness_failures >= AGENT_LIVENESS_FAILURE_LIMIT" in source
+    assert "micro-ROS Agent liveness failed; restarting for rediscovery." in source
+    assert "spin_rc != RCL_RET_TIMEOUT" in source
+
+
 def _firmware_calibration_array(source: str, name: str) -> list[int]:
     match = re.search(
         rf"constexpr int16_t {name}\[kJointCount\]\s*=\s*\{{([^}}]+)\}};",
