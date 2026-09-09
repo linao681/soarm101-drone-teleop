@@ -1,0 +1,92 @@
+SO-ARM101 wireless leader software gate
+Date: 2026-09-10 (plan artifact name retained: 2026-09-09)
+Worktree: /home/linao/so101_lerobot/.worktrees/wireless-leader
+Branch: codex/wireless-leader
+
+Scope
+-----
+Software-only gate. No hardware upload was performed. No credential file was read or included.
+
+Commits under test
+------------------
+7702457 feat: launch wired or wireless leader
+3cbdf6b feat: measure wireless leader health
+70107bf feat: accept wireless leader input
+2a3519e feat: discover follower micro-ROS agent
+27f56e4 fix: scope leader micro-ROS capacities
+cc61f96 fix: correct leader firmware review issues
+ca3bc3d feat: add wireless leader firmware
+45a43bc feat: add wireless leader state machine
+00a1ee5 feat: share agent discovery protocol
+
+Gate 1: PC tests
+----------------
+Command:
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 /home/linao/miniforge3/envs/lerobot_so101/bin/python -m pytest tests/tools -q
+Output:
+Testing with DEVICE='cpu'
+106 passed in 0.83s
+
+Command:
+bash -n start_soarm_demo.sh
+Output:
+exit status 0
+
+Gate 2: follower native firmware
+---------------------------------
+Command:
+/home/linao/.platformio/penv/bin/pio test -e native
+Working directory:
+firmware/xiao_soarm
+Output:
+Collected 2 tests
+native:test_control_logic PASSED
+native:test_agent_discovery PASSED
+12 test cases: 12 succeeded
+
+Gate 3: leader native firmware
+------------------------------
+Command:
+/home/linao/.platformio/penv/bin/pio test -e native
+Working directory:
+firmware/xiao_soarm_leader
+Output:
+Collected 1 test
+native:test_leader_logic PASSED
+5 test cases: 5 succeeded
+
+Gate 4: follower ESP32-C3 compile
+----------------------------------
+Command:
+/home/linao/.platformio/penv/bin/pio run -e seeed_xiao_esp32c3
+Working directory:
+firmware/xiao_soarm
+Output:
+Environment seeed_xiao_esp32c3 SUCCESS
+RAM: 27.0% (88588/327680 bytes)
+Flash: 64.5% (844924/1310720 bytes)
+No upload target was used.
+
+Gate 5: leader ESP32-C3 compile
+--------------------------------
+Command:
+/home/linao/.platformio/penv/bin/pio run -e seeed_xiao_esp32c3
+Working directory:
+firmware/xiao_soarm_leader
+Output:
+Environment seeed_xiao_esp32c3 SUCCESS
+RAM: 25.6% (83884/327680 bytes)
+Flash: 61.7% (808720/1310720 bytes)
+No upload target was used.
+
+Environment note
+----------------
+The first native-test attempt was blocked before compilation because the restricted
+execution environment could not write PlatformIO's lock/cache files. The same exact
+commands were rerun with the required local PlatformIO cache permission and passed
+as recorded above. This was an execution-environment restriction, not a test failure.
+
+Conclusion
+----------
+SOFTWARE GATE PASS. Task 12 physical upload/smoke evidence is still required before
+any claim about the new leader XIAO operating on hardware.
