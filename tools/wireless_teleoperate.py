@@ -15,12 +15,16 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Int32MultiArray
 
-from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from tools.soarm_wireless.control import (
     JOINT_NAMES,
     absolute_target,
     load_follower_calibration,
     relative_target,
+)
+from tools.soarm_wireless.leader_source import (
+    LeaderUnavailable,
+    WiredLeaderSource,
+    WirelessLeaderSource,
 )
 from tools.soarm_wireless.metrics import MetricsWriter
 from tools.soarm_wireless.protocol import (
@@ -36,7 +40,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Bridge a LeRobot SO-101 leader to a wireless micro-ROS follower."
     )
-    parser.add_argument("--leader-port", required=True, help="Leader USB serial port, e.g. /dev/ttyACM0")
+    parser.add_argument(
+        "--leader-mode",
+        choices=("wired", "wireless"),
+        default="wired",
+        help="Use the USB leader or the wireless leader input",
+    )
+    parser.add_argument(
+        "--leader-port",
+        default=None,
+        help="Leader USB serial port, e.g. /dev/ttyACM0 (wired mode only)",
+    )
     parser.add_argument("--leader-id", default="leader_recal", help="Leader calibration file stem")
     parser.add_argument(
         "--calibration-dir",
@@ -75,10 +89,18 @@ def parse_args() -> argparse.Namespace:
         help="Seconds used to blend from the follower pose to the initial leader pose",
     )
     parser.add_argument(
+        "--leader-recovery-blend-duration",
         "--recovery-blend-duration",
+        dest="leader_recovery_blend_duration",
         type=float,
-        default=3.0,
+        default=1.0,
         help="Seconds used to smoothly catch up after follower session recovery",
+    )
+    parser.add_argument(
+        "--leader-stale-timeout",
+        type=float,
+        default=0.15,
+        help="Seconds after which the latest wireless leader sample is unavailable",
     )
     parser.add_argument(
         "--mapping-mode",
@@ -95,7 +117,10 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Write accepted follower status samples to this CSV path",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.leader_mode == "wired" and not args.leader_port:
+        parser.error("--leader-port is required when --leader-mode is wired")
+    return args
 
 
 def limit_step(previous: list[float], desired: list[float], maximum: float) -> list[float]:
@@ -132,6 +157,89 @@ def compute_recovery_target(
     if mapping_mode == "relative":
         return relative_target(action, leader_origin, follower_origin, follower_calibration)
     return absolute_target(action, follower_calibration)
+
+
+def build_leader_source(args: argparse.Namespace, node) -> WiredLeaderSource | WirelessLeaderSource:
+    if args.leader_mode == "wireless":
+        calibration_path = args.calibration_dir / f"{args.leader_id}.json"
+        return WirelessLeaderSource(node, calibration_path, args.leader_stale_timeout)
+    if not args.leader_port:
+        raise ValueError("--leader-port is required when --leader-mode is wired")
+    return WiredLeaderSource(
+        port=args.leader_port,
+        leader_id=args.leader_id,
+        calibration_dir=args.calibration_dir,
+    )
+
+
+def forward_leader_command(
+    node: WirelessFollowerBridge,
+    leader_source,
+    now: float,
+    command: list[float],
+    leader_origin: dict[str, float],
+    follower_origin: list[float],
+    follower_calibration: dict[str, dict[str, int]],
+    mapping_mode: str,
+    max_step: float,
+) -> tuple[list[float], dict[str, float] | None, bool]:
+    """Forward one leader action, never publishing when the leader is unavailable."""
+    try:
+        action = leader_source.get_action(now)
+    except LeaderUnavailable:
+        return command, None, False
+    desired = compute_recovery_target(
+        action,
+        leader_origin,
+        follower_origin,
+        follower_calibration,
+        mapping_mode,
+    )
+    command = limit_step(command, desired, max_step)
+    node.set_command_context(action, command)
+    node.publish_command(command)
+    return command, action, True
+
+
+def recover_leader_session(
+    node: WirelessFollowerBridge,
+    leader_source,
+    now: float,
+    leader_origin: dict[str, float],
+    follower_origin: list[float],
+    follower_calibration: dict[str, dict[str, int]],
+    mapping_mode: str,
+    recovery_blend_duration: float,
+    rate: float,
+    max_step: float,
+    feedback_timeout: float,
+    *,
+    action: dict[str, float] | None = None,
+    after_monotonic: float = 0.0,
+) -> list[float]:
+    """Re-arm the follower at its measured pose and catch up to the live leader."""
+    follower_start = wait_for_follower(node, timeout=5.0, after_monotonic=after_monotonic)
+    action = leader_source.get_action(time.monotonic())
+    node.reset_session()
+    arm_at_current_pose(node, follower_start)
+    recovery_target = compute_recovery_target(
+        action,
+        leader_origin,
+        follower_origin,
+        follower_calibration,
+        mapping_mode,
+    )
+    node.set_command_context(action, recovery_target)
+    return startup_blend(
+        node,
+        follower_start,
+        recovery_target,
+        recovery_blend_duration,
+        rate,
+        max_step,
+        feedback_timeout,
+        leader_source=leader_source,
+    )
 
 
 class WirelessFollowerBridge(Node):
@@ -267,6 +375,20 @@ def wait_for_follower(
     return list(node.latest_positions)
 
 
+def wait_for_leader(node: WirelessFollowerBridge, leader_source, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    last_error: LeaderUnavailable | None = None
+    while True:
+        try:
+            return leader_source.get_action(time.monotonic())
+        except LeaderUnavailable as error:
+            last_error = error
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise RuntimeError(f"Leader did not become ready within {timeout:.1f}s") from last_error
+        rclpy.spin_once(node, timeout_sec=min(0.1, remaining))
+
+
 def arm_at_current_pose(
     node: WirelessFollowerBridge, current: list[float], timeout: float = 5.0
 ) -> None:
@@ -310,6 +432,8 @@ def startup_blend(
     rate: float,
     max_step: float,
     feedback_timeout: float,
+    *,
+    leader_source=None,
 ) -> list[float]:
     steps = max(1, round(duration * rate))
     command = list(start)
@@ -318,6 +442,8 @@ def startup_blend(
     for step in range(1, steps + 1):
         rclpy.spin_once(node, timeout_sec=0.0)
         node.log_latest_status()
+        if leader_source is not None:
+            leader_source.get_action(time.monotonic())
         if time.monotonic() - node.latest_monotonic > feedback_timeout:
             raise RuntimeError("Follower feedback timed out during startup synchronization")
         if node.latest_status is not None and status_matches_session(
@@ -347,33 +473,29 @@ def run() -> None:
         raise ValueError("--max-step-rad must be between 0 and the firmware's 0.25-rad limit")
     if args.feedback_timeout <= 0.0 or args.recovery_timeout <= 0.0:
         raise ValueError("--feedback-timeout and --recovery-timeout must be positive")
-    if args.startup_duration <= 0.0 or args.recovery_blend_duration <= 0.0:
+    if args.startup_duration <= 0.0 or args.leader_recovery_blend_duration <= 0.0:
         raise ValueError("--startup-duration and --recovery-blend-duration must be positive")
+    if args.leader_stale_timeout <= 0.0:
+        raise ValueError("--leader-stale-timeout must be positive")
 
     follower_calibration = load_follower_calibration(args.follower_calibration)
-    leader_config = SO101LeaderConfig(
-        port=args.leader_port,
-        id=args.leader_id,
-        calibration_dir=args.calibration_dir,
-        use_degrees=False,
-    )
-    leader = SO101Leader(leader_config)
 
     rclpy.init()
     node = WirelessFollowerBridge()
     metrics_writer = MetricsWriter(args.metrics_csv) if args.metrics_csv is not None else None
+    leader_source = None
     try:
         if metrics_writer is not None:
             metrics_writer.__enter__()
         node.set_metrics_writer(metrics_writer)
-        print(f"Connecting leader on {args.leader_port}...", flush=True)
-        leader.connect(calibrate=False)
-        if not leader.is_calibrated:
-            raise RuntimeError(
-                "Leader EEPROM calibration does not match "
-                f"{leader.calibration_fpath}; recalibrate or restore it before teleoperation"
-            )
-        print(f"Leader calibration matched: {leader.calibration_fpath}", flush=True)
+        leader_source = build_leader_source(args, node)
+        if args.leader_mode == "wired":
+            print(f"Connecting leader on {args.leader_port}...", flush=True)
+        else:
+            print("Waiting for a ready wireless leader sample...", flush=True)
+        leader_source.connect()
+        if args.leader_mode == "wired":
+            print("Leader EEPROM calibration matched", flush=True)
 
         follower_start = wait_for_follower(node)
         print(
@@ -384,7 +506,7 @@ def run() -> None:
         arm_at_current_pose(node, follower_start)
         print("Follower armed at its measured pose without a jump", flush=True)
 
-        leader_origin = leader.get_action()
+        leader_origin = wait_for_leader(node, leader_source)
         follower_origin = list(follower_start)
         if args.mapping_mode == "relative":
             initial_target = list(follower_start)
@@ -399,6 +521,7 @@ def run() -> None:
             args.rate,
             args.max_step_rad,
             args.feedback_timeout,
+            leader_source=leader_source,
         )
         print(f"Initial synchronization complete ({args.mapping_mode} mapping)", flush=True)
         print("Live teleoperation active; press Ctrl+C to stop", flush=True)
@@ -407,6 +530,8 @@ def run() -> None:
         next_tick = time.monotonic()
         last_report = 0.0
         stale_since: float | None = None
+        leader_outage = False
+        leader_session_id = leader_source.boot_session_id
         while rclpy.ok():
             rclpy.spin_once(node, timeout_sec=0.0)
             node.log_latest_status()
@@ -422,6 +547,46 @@ def run() -> None:
                 time.sleep(min(period, 0.05))
                 continue
 
+            try:
+                action = leader_source.get_action(now)
+            except LeaderUnavailable:
+                leader_outage = True
+                time.sleep(min(period, 0.05))
+                continue
+
+            session_changed = (
+                leader_source.boot_session_id is not None
+                and leader_session_id is not None
+                and leader_source.boot_session_id != leader_session_id
+            )
+            if leader_outage or session_changed:
+                try:
+                    command = recover_leader_session(
+                        node=node,
+                        leader_source=leader_source,
+                        now=now,
+                        leader_origin=leader_origin,
+                        follower_origin=follower_origin,
+                        follower_calibration=follower_calibration,
+                        mapping_mode=args.mapping_mode,
+                        recovery_blend_duration=args.leader_recovery_blend_duration,
+                        rate=args.rate,
+                        max_step=args.max_step_rad,
+                        feedback_timeout=args.feedback_timeout,
+                        action=action,
+                    )
+                except LeaderUnavailable:
+                    leader_outage = True
+                    continue
+                leader_outage = False
+                leader_session_id = leader_source.boot_session_id
+                next_tick = time.monotonic()
+                print(
+                    "Leader input recovered with a fresh follower session and smooth catch-up",
+                    flush=True,
+                )
+                continue
+
             status = node.latest_status
             if (
                 status is not None
@@ -429,28 +594,25 @@ def run() -> None:
                 and status.state in (FollowerState.HOLDING_TIMEOUT, FollowerState.BUS_FAULT)
             ):
                 previous_feedback = node.latest_monotonic
-                node.reset_session()
-                follower_start = wait_for_follower(node, timeout=5.0, after_monotonic=previous_feedback)
-                arm_at_current_pose(node, follower_start)
-                action = leader.get_action()
-                recovery_target = compute_recovery_target(
-                    action,
-                    leader_origin,
-                    follower_origin,
-                    follower_calibration,
-                    args.mapping_mode,
-                )
-                command = list(follower_start)
-                node.set_command_context(action, recovery_target)
-                command = startup_blend(
-                    node,
-                    follower_start,
-                    recovery_target,
-                    args.recovery_blend_duration,
-                    args.rate,
-                    args.max_step_rad,
-                    args.feedback_timeout,
-                )
+                try:
+                    command = recover_leader_session(
+                        node=node,
+                        leader_source=leader_source,
+                        now=now,
+                        leader_origin=leader_origin,
+                        follower_origin=follower_origin,
+                        follower_calibration=follower_calibration,
+                        mapping_mode=args.mapping_mode,
+                        recovery_blend_duration=args.leader_recovery_blend_duration,
+                        rate=args.rate,
+                        max_step=args.max_step_rad,
+                        feedback_timeout=args.feedback_timeout,
+                        action=action,
+                        after_monotonic=previous_feedback,
+                    )
+                except LeaderUnavailable:
+                    leader_outage = True
+                    continue
                 next_tick = time.monotonic()
                 print(
                     "Follower session recovered with a fresh handshake and smooth catch-up",
@@ -458,7 +620,6 @@ def run() -> None:
                 )
                 continue
 
-            action = leader.get_action()
             if args.mapping_mode == "relative":
                 desired = relative_target(
                     action,
@@ -489,8 +650,8 @@ def run() -> None:
     finally:
         if metrics_writer is not None:
             metrics_writer.__exit__(None, None, None)
-        if leader.is_connected:
-            leader.disconnect()
+        if leader_source is not None:
+            leader_source.disconnect()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

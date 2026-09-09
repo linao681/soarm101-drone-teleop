@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import time
+
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Int32MultiArray
+
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
 from .leader_protocol import (
     LeaderRawState,
     LeaderStateCode,
     LeaderStatus,
     leader_calibration_crc32,
+    load_leader_calibration,
     normalize_leader_raw,
 )
 from .protocol import is_newer_sequence
@@ -14,6 +22,116 @@ from .protocol import is_newer_sequence
 
 class LeaderUnavailable(RuntimeError):
     pass
+
+
+class WiredLeaderSource:
+    """Common leader-source adapter for the existing USB SO-101 leader."""
+
+    def __init__(
+        self,
+        port: str,
+        leader_id: str = "leader_recal",
+        calibration_dir: Path = Path("/home/linao/so101_lerobot/cali"),
+        *,
+        leader=None,
+    ) -> None:
+        if leader is None:
+            config = SO101LeaderConfig(
+                port=port,
+                id=leader_id,
+                calibration_dir=calibration_dir,
+                use_degrees=False,
+            )
+            leader = SO101Leader(config)
+        self._leader = leader
+
+    @property
+    def is_connected(self) -> bool:
+        return bool(self._leader.is_connected)
+
+    @property
+    def boot_session_id(self) -> None:
+        return None
+
+    def connect(self) -> None:
+        self._leader.connect(calibrate=False)
+        if not self._leader.is_calibrated:
+            raise RuntimeError(
+                "Leader EEPROM calibration does not match "
+                f"{self._leader.calibration_fpath}; recalibrate or restore it before teleoperation"
+            )
+
+    def get_action(self, now: float | None = None) -> dict[str, float]:
+        del now
+        return dict(self._leader.get_action())
+
+    def disconnect(self) -> None:
+        if self._leader.is_connected:
+            self._leader.disconnect()
+
+
+class WirelessLeaderSource:
+    """ROS adapter that gates raw leader samples through ``WirelessLeaderTracker``."""
+
+    def __init__(self, node, calibration_path: Path, stale_timeout_s: float = 0.150) -> None:
+        self._node = node
+        self._tracker = WirelessLeaderTracker(
+            load_leader_calibration(Path(calibration_path)), stale_timeout_s=stale_timeout_s
+        )
+        self._connected = False
+        qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self._raw_subscription = node.create_subscription(
+            Int32MultiArray, "/leader/raw_state", self._raw_callback, qos
+        )
+        self._status_subscription = node.create_subscription(
+            Int32MultiArray, "/leader/status", self._status_callback, qos
+        )
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    @property
+    def boot_session_id(self) -> int | None:
+        sample = self._tracker.sample
+        return None if sample is None else sample.boot_session_id
+
+    @property
+    def last_error(self) -> str:
+        return self._tracker.last_error
+
+    def connect(self) -> None:
+        self._connected = True
+
+    def get_action(self, now: float | None = None) -> dict[str, float]:
+        if not self._connected:
+            raise LeaderUnavailable("wireless leader source is disconnected")
+        return self._tracker.get_action(time.monotonic() if now is None else now)
+
+    def disconnect(self) -> None:
+        self._connected = False
+        self._tracker.reset()
+
+    def _status_callback(self, message: Int32MultiArray) -> None:
+        try:
+            status = LeaderStatus.from_array(list(message.data))
+        except (TypeError, ValueError):
+            self._tracker.last_error = "invalid_status"
+            return
+        self._tracker.on_status(status, received_at=time.monotonic())
+
+    def _raw_callback(self, message: Int32MultiArray) -> None:
+        try:
+            state = LeaderRawState.from_array(list(message.data))
+        except (TypeError, ValueError):
+            self._tracker.last_error = "invalid_raw_state"
+            return
+        self._tracker.on_raw_state(state, received_at=time.monotonic())
 
 
 @dataclass(frozen=True)
@@ -103,6 +221,10 @@ class WirelessLeaderTracker:
         if self._sample is None:
             return None
         return now - self._sample.received_at
+
+    @property
+    def sample(self) -> LeaderSample | None:
+        return self._sample
 
     def reset(self) -> None:
         self._status: LeaderStatus | None = None
