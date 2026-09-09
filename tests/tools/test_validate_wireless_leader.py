@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,6 +82,29 @@ def test_validator_cli_requires_device_id_and_accepts_capture_options():
     assert args.duration == pytest.approx(2.5)
     assert args.evidence_path == Path("evidence.json")
     assert args.yes is True
+
+
+def test_validator_runs_from_project_root_without_pythonpath():
+    project_root = Path(__file__).resolve().parents[2]
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            "source /opt/ros/humble/setup.bash && "
+            f"exec {sys.executable} tools/validate_wireless_leader.py --help",
+        ],
+        cwd=project_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--device-id" in result.stdout
 
 
 def test_validator_records_protocol_identity_health_and_joint_ranges():

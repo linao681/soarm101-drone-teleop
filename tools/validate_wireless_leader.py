@@ -6,12 +6,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+
+# Make ``python tools/validate_wireless_leader.py`` work from the documented
+# project-root command without requiring the caller to set PYTHONPATH.
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
 import rclpy
 from rclpy.node import Node
