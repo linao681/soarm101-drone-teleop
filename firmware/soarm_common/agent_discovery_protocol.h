@@ -53,8 +53,6 @@ inline bool parse_announcement(const char* data, size_t size, Announcement& outp
             value = static_cast<uint8_t>(digit - '0');
         } else if (digit >= 'a' && digit <= 'f') {
             value = static_cast<uint8_t>(digit - 'a' + 10);
-        } else if (digit >= 'A' && digit <= 'F') {
-            value = static_cast<uint8_t>(digit - 'A' + 10);
         } else {
             return false;
         }

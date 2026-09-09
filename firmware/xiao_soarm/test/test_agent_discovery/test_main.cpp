@@ -16,12 +16,15 @@ void test_invalid_announcements() {
     agent_discovery::Announcement result{};
     const char wrong_version[] = "SOARM_AGENT 2 1234abcd 8888\n";
     const char bad_nonce[] = "SOARM_AGENT 1 zzzzabcd 8888\n";
+    const char uppercase_nonce[] = "SOARM_AGENT 1 1234ABCD 8888\n";
     const char bad_port[] = "SOARM_AGENT 1 1234abcd 0\n";
 
     TEST_ASSERT_FALSE(agent_discovery::parse_announcement(
         wrong_version, sizeof(wrong_version) - 1, result));
     TEST_ASSERT_FALSE(agent_discovery::parse_announcement(
         bad_nonce, sizeof(bad_nonce) - 1, result));
+    TEST_ASSERT_FALSE(agent_discovery::parse_announcement(
+        uppercase_nonce, sizeof(uppercase_nonce) - 1, result));
     TEST_ASSERT_FALSE(agent_discovery::parse_announcement(
         bad_port, sizeof(bad_port) - 1, result));
 }
@@ -45,11 +48,25 @@ void test_announcement_rejects_invalid_port_range() {
         too_large, sizeof(too_large) - 1, result));
 }
 
+void test_announcement_accepts_port_boundaries() {
+    agent_discovery::Announcement result{};
+    const char minimum[] = "SOARM_AGENT 1 1234abcd 1\n";
+    const char maximum[] = "SOARM_AGENT 1 1234abcd 65535\n";
+
+    TEST_ASSERT_TRUE(agent_discovery::parse_announcement(
+        minimum, sizeof(minimum) - 1, result));
+    TEST_ASSERT_EQUAL_UINT16(1, result.agent_port);
+    TEST_ASSERT_TRUE(agent_discovery::parse_announcement(
+        maximum, sizeof(maximum) - 1, result));
+    TEST_ASSERT_EQUAL_UINT16(65535, result.agent_port);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_valid_announcement);
     RUN_TEST(test_invalid_announcements);
     RUN_TEST(test_announcement_rejects_trailing_bytes_and_extra_fields);
     RUN_TEST(test_announcement_rejects_invalid_port_range);
+    RUN_TEST(test_announcement_accepts_port_boundaries);
     return UNITY_END();
 }
