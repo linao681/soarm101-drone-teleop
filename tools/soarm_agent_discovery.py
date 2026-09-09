@@ -11,7 +11,7 @@ import secrets
 import signal
 import socket
 import subprocess
-import time
+import threading
 from collections.abc import Callable
 
 
@@ -129,17 +129,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    stop = False
+    stop_event = threading.Event()
 
     def request_stop(_signum: int, _frame: object) -> None:
-        nonlocal stop
-        stop = True
+        stop_event.set()
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
     try:
-        # Keep signal handling simple while allowing the service loop to remain testable.
-        run(args, lambda: stop)
+        run(args, stop_event)
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"discovery service failed: {exc}")
         return 1
@@ -148,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def run(
     args: argparse.Namespace,
-    should_stop: Callable[[], bool],
+    stop_event: threading.Event,
     *,
     socket_factory: Callable[..., socket.socket] = socket.socket,
 ) -> None:
@@ -162,9 +160,9 @@ def run(
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.bind((bind_ip, DISCOVERY_PORT))
         sock.settimeout(0.0)
-        while not should_stop():
+        while not stop_event.is_set():
             serve_once(sock, nonce, args.agent_port, (broadcast_ip, DISCOVERY_PORT))
-            time.sleep(args.interval)
+            stop_event.wait(args.interval)
     finally:
         sock.close()
 
