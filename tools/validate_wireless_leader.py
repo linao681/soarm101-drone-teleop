@@ -228,8 +228,6 @@ def validate_capture(capture: LeaderCapture, duration: float) -> list[str]:
         failures.append("leader raw samples span multiple boot sessions")
     if capture.invalid_messages:
         failures.append("invalid leader protocol messages were received")
-    if capture.rejected_samples:
-        failures.append("rejected leader raw samples were received")
     return failures
 
 

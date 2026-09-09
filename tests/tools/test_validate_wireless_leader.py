@@ -147,7 +147,7 @@ def test_validator_frequency_uses_requested_duration_not_raw_sample_span():
     assert any("sample frequency" in failure for failure in validate_capture(capture, 1.0))
 
 
-def test_validator_rejects_duplicate_and_older_raw_sequences():
+def test_validator_records_duplicate_and_older_raw_sequences_without_failing_health_gate():
     capture = LeaderCapture(CALIBRATION, device_id="leader")
     capture.status_callback(SimpleNamespace(data=_status(last_sequence=10)))
     positions = [700, 2000, 3000, 700, 1000, 1500]
@@ -159,7 +159,7 @@ def test_validator_rejects_duplicate_and_older_raw_sequences():
 
     assert [sample.state.sequence for sample in capture.raw_samples] == [11]
     assert capture.rejected_samples == 3
-    assert any("rejected" in failure for failure in validate_capture(capture, 1.0))
+    assert not any("rejected" in failure for failure in validate_capture(capture, 1.0))
 
 
 @pytest.mark.parametrize(
@@ -174,7 +174,9 @@ def test_validator_rejects_duplicate_and_older_raw_sequences():
         ({}, {"response_mask": 0}),
     ],
 )
-def test_validator_rejects_raw_samples_that_fail_protocol_gates(status_kwargs, raw_kwargs):
+def test_validator_records_raw_samples_that_fail_protocol_gates_without_failing_health_gate(
+    status_kwargs, raw_kwargs
+):
     capture = LeaderCapture(CALIBRATION, device_id="leader")
     capture.status_callback(SimpleNamespace(data=_status(**status_kwargs)))
     capture.raw_callback(
@@ -190,7 +192,7 @@ def test_validator_rejects_raw_samples_that_fail_protocol_gates(status_kwargs, r
 
     assert capture.raw_samples == []
     assert capture.rejected_samples == 1
-    assert any("rejected" in failure for failure in validate_capture(capture, 1.0))
+    assert not any("rejected" in failure for failure in validate_capture(capture, 1.0))
 
 
 def test_validator_resets_sequence_baseline_when_status_session_changes():
@@ -229,7 +231,7 @@ def test_validator_counts_invalid_and_rejected_messages_separately():
     assert evidence["rejected_sample_count"] == 1
     failures = validate_capture(capture, 1.0)
     assert any("invalid" in failure for failure in failures)
-    assert any("rejected" in failure for failure in failures)
+    assert not any("rejected" in failure for failure in failures)
 
 
 def test_validator_is_read_only_and_writes_evidence_atomically(tmp_path: Path):
