@@ -109,6 +109,9 @@ celerybeat.pid
 # Other
 *~
 
+# Codex isolated worktrees
+.worktrees/
+
 ### OS Specific ###
 # macOS
 .DS_Store
