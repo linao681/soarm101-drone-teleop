@@ -1,5 +1,7 @@
 #include "servo_bus.h"
 
+#include <cstdint>
+
 #include <SCServo.h>
 
 namespace servo_bus {
@@ -131,7 +133,8 @@ bool read_all(int32_t positions[kJointCount]) {
 
     for (size_t joint = 0; joint < kJointCount; ++joint) {
         const int raw = servos.ReadPos(kIds[joint]);
-        if (raw >= 0) {
+        const bool valid_read = servos.Err == 0 && raw >= INT16_MIN && raw <= INT16_MAX;
+        if (valid_read) {
             positions[joint] = static_cast<int32_t>(raw);
             response_mask |= static_cast<uint8_t>(1U << joint);
             bus_stats.read_success++;
