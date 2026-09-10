@@ -69,15 +69,19 @@ void test_agent_watchdog_stops_on_first_failure_and_restarts_after_five() {
     AgentWatchdog watchdog;
 
     AgentHealth health = watchdog.report_probe(false);
+    TEST_ASSERT_TRUE(health.connected);
+    TEST_ASSERT_FALSE(health.restart_requested);
+    health = watchdog.report_probe(false);
+    TEST_ASSERT_TRUE(health.connected);
+    TEST_ASSERT_FALSE(health.restart_requested);
+    health = watchdog.report_probe(false);
+    TEST_ASSERT_TRUE(health.connected);
+    TEST_ASSERT_FALSE(health.restart_requested);
+    health = watchdog.report_probe(false);
+    TEST_ASSERT_TRUE(health.connected);
+    TEST_ASSERT_FALSE(health.restart_requested);
+    health = watchdog.report_probe(false);
     TEST_ASSERT_FALSE(health.connected);
-    TEST_ASSERT_FALSE(health.restart_requested);
-    health = watchdog.report_probe(false);
-    TEST_ASSERT_FALSE(health.restart_requested);
-    health = watchdog.report_probe(false);
-    TEST_ASSERT_FALSE(health.restart_requested);
-    health = watchdog.report_probe(false);
-    TEST_ASSERT_FALSE(health.restart_requested);
-    health = watchdog.report_probe(false);
     TEST_ASSERT_TRUE(health.restart_requested);
 }
 

@@ -22,9 +22,11 @@ AgentHealth AgentWatchdog::report_probe(bool reachable) {
     if (consecutive_failures_ < kAgentLivenessFailureLimit) {
         ++consecutive_failures_;
     }
+    const bool restart_requested =
+        consecutive_failures_ >= kAgentLivenessFailureLimit;
     return AgentHealth{
-        false,
-        consecutive_failures_ >= kAgentLivenessFailureLimit,
+        !restart_requested,
+        restart_requested,
     };
 }
 
