@@ -165,6 +165,12 @@ def update_leader_sample_context(node: WirelessFollowerBridge, leader_source, no
         setter(getattr(leader_source, "sample_metadata", None), now=now)
 
 
+def drain_ros_callbacks(node: Node, max_callbacks: int = 8) -> None:
+    """Service every currently queued wireless topic without blocking control."""
+    for _ in range(max_callbacks):
+        rclpy.spin_once(node, timeout_sec=0.0)
+
+
 def build_leader_source(args: argparse.Namespace, node) -> WiredLeaderSource | WirelessLeaderSource:
     if args.leader_mode == "wireless":
         calibration_path = args.calibration_dir / f"{args.leader_id}.json"
@@ -546,7 +552,7 @@ def startup_blend(
     period = 1.0 / rate
     next_tick = time.monotonic()
     for step in range(1, steps + 1):
-        rclpy.spin_once(node, timeout_sec=0.0)
+        drain_ros_callbacks(node)
         node.log_latest_status()
         if leader_source is not None:
             now = time.monotonic()
@@ -644,7 +650,7 @@ def run() -> None:
         leader_outage = False
         leader_session_id = leader_source.boot_session_id
         while rclpy.ok():
-            rclpy.spin_once(node, timeout_sec=0.0)
+            drain_ros_callbacks(node)
             node.log_latest_status()
             now = time.monotonic()
             stale_since = update_feedback_recovery(

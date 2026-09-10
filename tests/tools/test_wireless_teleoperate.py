@@ -10,6 +10,7 @@ from tools.soarm_wireless.protocol import FollowerStatus
 from tools.wireless_teleoperate import (
     WirelessFollowerBridge,
     compute_recovery_target,
+    drain_ros_callbacks,
     forward_leader_command,
     parse_args,
     recover_leader_session,
@@ -29,6 +30,21 @@ class _Publisher:
 class _Clock:
     def now(self):
         return SimpleNamespace(to_msg=Time)
+
+
+def test_drain_ros_callbacks_services_all_ready_wireless_topics(monkeypatch):
+    calls = []
+    node = object()
+
+    monkeypatch.setattr(
+        teleoperate.rclpy,
+        "spin_once",
+        lambda received_node, timeout_sec: calls.append((received_node, timeout_sec)),
+    )
+
+    drain_ros_callbacks(node, max_callbacks=8)
+
+    assert calls == [(node, 0.0)] * 8
 
 
 def test_publish_command_records_sequence_for_metrics(monkeypatch):
