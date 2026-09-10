@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import struct
 import zlib
@@ -16,6 +17,23 @@ LEADER_RAW_FIELD_COUNT = 11
 LEADER_STATUS_FIELD_COUNT = 13
 EXPECTED_MODEL_NUMBER = 777
 _JOINT_MASK = 0x3F
+
+
+def parse_ros2_int_array_field(output: str) -> list[int]:
+    """Parse the first integer-array document printed by ``ros2 topic echo``."""
+    document_lines = []
+    for line in output.splitlines():
+        if line.strip() == "---":
+            break
+        if line.strip():
+            document_lines.append(line)
+    try:
+        values = ast.literal_eval("\n".join(document_lines))
+    except (SyntaxError, ValueError) as error:
+        raise ValueError("ROS 2 field output is not an integer array") from error
+    if not isinstance(values, list) or any(type(value) is not int for value in values):
+        raise ValueError("ROS 2 field output is not an integer array")
+    return values
 
 
 class LeaderStateCode(IntEnum):

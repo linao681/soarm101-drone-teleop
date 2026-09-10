@@ -83,6 +83,12 @@ def test_wireless_launcher_waits_for_leader_topics_and_does_not_pin_agent_ip():
     assert 'BROADCAST_IP' in launcher
 
 
+def test_wireless_launcher_parses_ros2_yaml_document_output():
+    launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
+
+    assert "parse_ros2_int_array_field" in launcher
+
+
 def test_wireless_launcher_starts_discovery_with_computed_addresses():
     launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
 

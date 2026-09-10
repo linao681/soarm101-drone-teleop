@@ -10,6 +10,7 @@ from tools.soarm_wireless.leader_protocol import (
     leader_calibration_crc32,
     load_leader_calibration,
     normalize_leader_raw,
+    parse_ros2_int_array_field,
 )
 
 
@@ -41,6 +42,26 @@ def test_status_requires_exact_shape_and_known_state():
     assert status.calibration_crc32 == 0xFFFFFFFF
     with pytest.raises(ValueError, match="13"):
         LeaderStatus.from_array([1] * 12)
+
+
+def test_ros2_int_array_field_parser_ignores_yaml_document_separator():
+    output = "[1, 2, 7, 9, 63, 63, 63, -1, 100, 0, 0, 2000, -42]\n---\n"
+
+    assert parse_ros2_int_array_field(output) == [
+        1,
+        2,
+        7,
+        9,
+        63,
+        63,
+        63,
+        -1,
+        100,
+        0,
+        0,
+        2000,
+        -42,
+    ]
 
 
 def test_normalization_matches_lerobot_ranges():

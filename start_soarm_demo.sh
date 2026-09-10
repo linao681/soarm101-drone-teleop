@@ -208,11 +208,12 @@ if [[ "$LEADER_MODE" == "wireless" ]]; then
     fi
     LEADER_STATUS_DATA="$(timeout 2s ros2 topic echo /leader/status --once --field data 2>/dev/null)" || \
         fail "无法读取无线主臂状态"
-    "$PYTHON" -c '
-import ast
+    PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c '
 import sys
 
-values = ast.literal_eval(sys.argv[1])
+from tools.soarm_wireless.leader_protocol import parse_ros2_int_array_field
+
+values = parse_ros2_int_array_field(sys.argv[1])
 if len(values) != 13 or values[0] != 1 or values[1] != 2 or any(value != 0x3F for value in values[4:7]):
     raise SystemExit("无线主臂状态不是 READY/全关节就绪")
 ' "$LEADER_STATUS_DATA" || fail "无线主臂状态未通过预检"
