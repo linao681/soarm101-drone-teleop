@@ -27,3 +27,27 @@ connect a device to WiFi.
 ```
 
 These commands compile only. Uploading is intentionally a separate operation.
+
+## Computer launcher
+
+After both XIAOs have been configured and the staged hardware checks are
+available, the repository launcher defaults to wireless leader plus wireless
+follower:
+
+```bash
+./start_soarm_demo.sh
+```
+
+The explicit modes remain available for diagnosis and fallback:
+
+```bash
+./start_soarm_demo.sh --leader wireless
+./start_soarm_demo.sh --leader wired
+./start_soarm_demo.sh --leader wireless --check
+```
+
+The launcher discovers the computer's current WiFi address at runtime and
+broadcasts the micro-ROS agent endpoint. A hotspot address change therefore
+does not require reflashing, but the reconnection behavior still needs to be
+validated on the target network. Keep the servo power removable and the arms
+mechanically supported during hardware tests.

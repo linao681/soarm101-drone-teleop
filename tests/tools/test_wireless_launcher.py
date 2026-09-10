@@ -51,10 +51,10 @@ fi"""
     assert 'echo "预检通过：从臂 WiFi、micro-ROS、状态反馈和所选主臂输入均已就绪；未启动舵机遥操"' in launcher
 
 
-def test_launcher_parses_leader_mode_without_eval_and_keeps_wired_as_default():
+def test_launcher_defaults_to_wireless_and_keeps_explicit_modes():
     launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
 
-    assert 'LEADER_MODE="wired"' in launcher
+    assert 'LEADER_MODE="wireless"' in launcher
     assert 'case "$1" in' in launcher
     assert '--leader)' in launcher
     assert 'wired|wireless' in launcher

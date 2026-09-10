@@ -35,7 +35,7 @@ LEADER_RECOVERY_BLEND_DURATION="$RECOVERY_BLEND_DURATION"
 STARTED_AGENT_PID=""
 STARTED_DISCOVERY_PID=""
 CHECK_ONLY=false
-LEADER_MODE="wired"
+LEADER_MODE="wireless"
 
 usage() {
     echo "用法: $0 [--leader wired|wireless] [--check]" >&2

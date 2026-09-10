@@ -4,6 +4,23 @@
 
 截至 2026-09-06，本文档中的 PC-only、原生固件和 ESP32-C3 编译证据已保存；需要真实机械臂、舵机电源或 WiFi 状态变化的闸门仍标记为“未执行”。没有实机观察和证据文件，不把它们写成通过。
 
+## 无线主臂扩展任务状态（2026-09-10）
+
+Task 15 已按操作员决定将启动脚本默认模式切换为“无线主臂 + 无线从臂”。
+Task 14-5（热点 IP 实际变化）和 Task 14-7（至少 10 分钟无线耐久）暂未执行，
+因此不能据此宣称全部硬件验收完成；后续出现问题时仍应补做并保留 CSV 与操作员证据。
+
+已保存的近期实机证据：
+
+- Task 14-4 主臂复位恢复：`logs/wireless-leader/leader-reset-recovery-2026-09-09.md`
+  现场行为正常，但复位窗口指标仍标记为部分异常。
+- Task 14-6 有线回退：`logs/wireless-leader/wired-fallback-2026-09-09.md`
+  有线主臂 + 无线从臂小幅测试正常，停止后保持最后位置。
+
+Task 15 不改变显式回退入口；出现无线问题时使用
+`./start_soarm_demo.sh --leader wired`，只做检查时使用
+`./start_soarm_demo.sh --leader wireless --check`。
+
 ## 控制协议和安全边界
 
 ### 控制状态
@@ -78,7 +95,8 @@
 ## 可复现实验命令
 
 ```bash
-./start_soarm_demo.sh
+./start_soarm_demo.sh                 # 默认：无线主臂 + 无线从臂
+./start_soarm_demo.sh --leader wired # 有线主臂 + 无线从臂回退
 python tools/analyze_wireless_log.py logs/teleop_YYYYmmdd_HHMMSS.csv
 cd firmware/xiao_soarm && pio test -e native
 cd firmware/xiao_soarm && pio run -e seeed_xiao_esp32c3

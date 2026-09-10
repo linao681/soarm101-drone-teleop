@@ -35,6 +35,26 @@ pio run --target upload
 python tools/analyze_wireless_log.py logs/teleop_YYYYmmdd_HHMMSS.csv
 ```
 
+## 电脑端启动方式
+
+仓库根目录的 `start_soarm_demo.sh` 默认启动无线主臂 + 无线从臂：
+
+```bash
+./start_soarm_demo.sh
+```
+
+也可以显式选择模式或只运行预检：
+
+```bash
+./start_soarm_demo.sh --leader wireless
+./start_soarm_demo.sh --leader wired
+./start_soarm_demo.sh --leader wireless --check
+```
+
+启动脚本会读取电脑当前 WiFi 地址并运行 agent discovery；不要把电脑的固定
+IP 写入固件。若无线主臂或热点暂时不可用，可使用 `--leader wired` 回退到
+USB 主臂。执行遥操前应清空运动空间、保持机械支撑，并准备随时移除舵机电源。
+
 micro-ROS 静态库位于 `lib/microros/`，ESP32-C3 使用 `riscv32` 工具链。
 舵机校准参数写在 `src/servo_bus.cpp` 中，用于启动时的 EEPROM 一致性检查。
 原生状态机测试和 ESP32-C3 编译通过前不要执行 upload；烧录前再次确认
