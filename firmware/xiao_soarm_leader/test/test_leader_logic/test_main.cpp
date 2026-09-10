@@ -65,11 +65,15 @@ void test_crc_matches_python_vector() {
     TEST_ASSERT_EQUAL_HEX32(0x9d36c031, calibration_crc32(records, 6));
 }
 
-void test_agent_watchdog_stops_on_first_failure_and_restarts_after_three() {
+void test_agent_watchdog_stops_on_first_failure_and_restarts_after_five() {
     AgentWatchdog watchdog;
 
     AgentHealth health = watchdog.report_probe(false);
     TEST_ASSERT_FALSE(health.connected);
+    TEST_ASSERT_FALSE(health.restart_requested);
+    health = watchdog.report_probe(false);
+    TEST_ASSERT_FALSE(health.restart_requested);
+    health = watchdog.report_probe(false);
     TEST_ASSERT_FALSE(health.restart_requested);
     health = watchdog.report_probe(false);
     TEST_ASSERT_FALSE(health.restart_requested);
@@ -96,7 +100,7 @@ int main() {
     RUN_TEST(test_missing_model_or_torque_mask_never_readies);
     RUN_TEST(test_sequence_wraps_from_uint32_max_to_zero);
     RUN_TEST(test_crc_matches_python_vector);
-    RUN_TEST(test_agent_watchdog_stops_on_first_failure_and_restarts_after_three);
+    RUN_TEST(test_agent_watchdog_stops_on_first_failure_and_restarts_after_five);
     RUN_TEST(test_agent_watchdog_success_resets_consecutive_failures);
     return UNITY_END();
 }

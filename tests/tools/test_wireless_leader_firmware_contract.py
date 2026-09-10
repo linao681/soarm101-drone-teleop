@@ -42,6 +42,13 @@ def test_leader_firmware_is_read_only_and_publishes_contract_topics():
         assert forbidden not in text
 
 
+def test_leader_agent_liveness_tolerates_hotspot_latency():
+    text = source_text()
+
+    assert "AGENT_PING_TIMEOUT_MS = 100" in text
+    assert "rmw_uros_ping_agent(AGENT_PING_TIMEOUT_MS, 1)" in text
+
+
 def test_leader_build_disables_generated_micro_ros_subscriptions():
     assert "-DRMW_UXRCE_MAX_SUBSCRIPTIONS=0" in platformio_text()
     assert "-DRMW_UXRCE_MAX_SUBSCRIBERS=0" not in platformio_text()

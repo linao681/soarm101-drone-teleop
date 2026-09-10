@@ -8,7 +8,7 @@ namespace leader_logic {
 constexpr uint8_t kValidMask = 0x3f;
 constexpr uint8_t kBadReadLimit = 3;
 constexpr uint8_t kGoodReadLimit = 10;
-constexpr uint8_t kAgentLivenessFailureLimit = 3;
+constexpr uint8_t kAgentLivenessFailureLimit = 5;
 
 enum State : int32_t { STARTING = 0, WAITING_AGENT = 1, READY = 2, BUS_FAULT = 3 };
 

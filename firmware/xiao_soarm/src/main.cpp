@@ -20,7 +20,8 @@ extern "C" void arduino_wifi_transport_dump_trace();
 
 const unsigned long WIFI_RESTART_TIMEOUT_MS = 10000;
 constexpr unsigned long AGENT_LIVENESS_PERIOD_MS = 1000;
-constexpr uint8_t AGENT_LIVENESS_FAILURE_LIMIT = 3;
+constexpr uint32_t AGENT_PING_TIMEOUT_MS = 100;
+constexpr uint8_t AGENT_LIVENESS_FAILURE_LIMIT = 5;
 
 rcl_publisher_t state_pub;
 rcl_publisher_t status_pub;
@@ -392,7 +393,7 @@ void setup() {
         }
         if (millis() - last_agent_liveness_ms >= AGENT_LIVENESS_PERIOD_MS) {
             last_agent_liveness_ms += AGENT_LIVENESS_PERIOD_MS;
-            if (rmw_uros_ping_agent(10, 1) == RMW_RET_OK) {
+            if (rmw_uros_ping_agent(AGENT_PING_TIMEOUT_MS, 1) == RMW_RET_OK) {
                 agent_liveness_failures = 0;
             } else {
                 agent_liveness_failures++;

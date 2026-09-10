@@ -22,6 +22,7 @@ constexpr size_t LEADER_STATUS_FIELD_COUNT = 13;
 constexpr uint32_t READ_PERIOD_MS = 20;
 constexpr uint32_t STATUS_PERIOD_MS = 100;
 constexpr uint32_t AGENT_LIVENESS_PERIOD_MS = 1000;
+constexpr uint32_t AGENT_PING_TIMEOUT_MS = 100;
 
 rcl_publisher_t raw_state_pub;
 rcl_publisher_t status_pub;
@@ -217,7 +218,7 @@ void setup() {
             AGENT_LIVENESS_PERIOD_MS) {
             last_agent_liveness_ms += AGENT_LIVENESS_PERIOD_MS;
             const leader_logic::AgentHealth health = agent_watchdog.report_probe(
-                rmw_uros_ping_agent(10, 1) == RMW_RET_OK);
+                rmw_uros_ping_agent(AGENT_PING_TIMEOUT_MS, 1) == RMW_RET_OK);
             controller.report_agent_connected(health.connected);
             if (health.restart_requested) {
                 Serial.println("micro-ROS Agent lost; restarting for rediscovery.");

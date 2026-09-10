@@ -41,10 +41,11 @@ def test_follower_checks_agent_liveness_without_using_executor_timeout():
     source = MAIN_CPP.read_text()
 
     assert "constexpr unsigned long AGENT_LIVENESS_PERIOD_MS = 1000;" in source
-    assert "constexpr uint8_t AGENT_LIVENESS_FAILURE_LIMIT = 3;" in source
+    assert "constexpr uint32_t AGENT_PING_TIMEOUT_MS = 100;" in source
+    assert "constexpr uint8_t AGENT_LIVENESS_FAILURE_LIMIT = 5;" in source
     assert "last_agent_liveness_ms" in source
     assert "agent_liveness_failures" in source
-    assert "rmw_uros_ping_agent(10, 1)" in source
+    assert "rmw_uros_ping_agent(AGENT_PING_TIMEOUT_MS, 1)" in source
     assert "agent_liveness_failures >= AGENT_LIVENESS_FAILURE_LIMIT" in source
     assert "micro-ROS Agent liveness failed; restarting for rediscovery." in source
     assert "spin_rc != RCL_RET_TIMEOUT" in source
