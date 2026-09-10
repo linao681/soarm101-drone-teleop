@@ -510,7 +510,7 @@ def arm_at_current_pose(
         sequence = node.publish_command(current)
         if first_sequence is None:
             first_sequence = sequence
-        rclpy.spin_once(node, timeout_sec=0.02)
+        drain_ros_callbacks(node)
         node.log_latest_status()
         status = node.latest_status
         if (

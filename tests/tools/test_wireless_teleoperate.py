@@ -6,9 +6,10 @@ from builtin_interfaces.msg import Time
 
 import tools.wireless_teleoperate as teleoperate
 from tools.soarm_wireless.leader_source import LeaderUnavailable
-from tools.soarm_wireless.protocol import FollowerStatus
+from tools.soarm_wireless.protocol import FollowerState, FollowerStatus
 from tools.wireless_teleoperate import (
     WirelessFollowerBridge,
+    arm_at_current_pose,
     compute_recovery_target,
     drain_ros_callbacks,
     forward_leader_command,
@@ -45,6 +46,32 @@ def test_drain_ros_callbacks_services_all_ready_wireless_topics(monkeypatch):
     drain_ros_callbacks(node, max_callbacks=8)
 
     assert calls == [(node, 0.0)] * 8
+
+
+def test_arm_at_current_pose_drains_callbacks_before_checking_handshake(monkeypatch):
+    node = SimpleNamespace(
+        session_id=123,
+        latest_status=None,
+        publish_command=lambda positions: 1,
+        log_latest_status=lambda: None,
+    )
+    drain_calls = []
+
+    def fake_drain(received_node):
+        drain_calls.append(received_node)
+        received_node.latest_status = SimpleNamespace(
+            session_id=123,
+            state=FollowerState.ACTIVE,
+            response_mask=0x3F,
+            last_received_sequence=1,
+        )
+
+    monkeypatch.setattr(teleoperate, "drain_ros_callbacks", fake_drain)
+    monkeypatch.setattr(teleoperate.rclpy, "spin_once", lambda *args, **kwargs: None)
+
+    arm_at_current_pose(node, [0.0] * 6, timeout=0.2)
+
+    assert drain_calls == [node]
 
 
 def test_publish_command_records_sequence_for_metrics(monkeypatch):
