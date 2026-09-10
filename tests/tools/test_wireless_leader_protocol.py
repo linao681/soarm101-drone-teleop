@@ -64,6 +64,26 @@ def test_ros2_int_array_field_parser_ignores_yaml_document_separator():
     ]
 
 
+def test_ros2_int_array_field_parser_accepts_ros_array_representation():
+    output = "array('i', [1, 2, 7, 9, 63, 63, 63, -1, 100, 0, 0, 2000, -42])\n---\n"
+
+    assert parse_ros2_int_array_field(output) == [
+        1,
+        2,
+        7,
+        9,
+        63,
+        63,
+        63,
+        -1,
+        100,
+        0,
+        0,
+        2000,
+        -42,
+    ]
+
+
 def test_normalization_matches_lerobot_ranges():
     raw = [694, 2012, 3080, 679, 2047, 2808]
     action = normalize_leader_raw(raw, CALIBRATION)

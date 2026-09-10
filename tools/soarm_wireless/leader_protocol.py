@@ -28,7 +28,18 @@ def parse_ros2_int_array_field(output: str) -> list[int]:
         if line.strip():
             document_lines.append(line)
     try:
-        values = ast.literal_eval("\n".join(document_lines))
+        expression = ast.parse("\n".join(document_lines), mode="eval").body
+        if (
+            isinstance(expression, ast.Call)
+            and isinstance(expression.func, ast.Name)
+            and expression.func.id == "array"
+            and len(expression.args) == 2
+            and not expression.keywords
+            and isinstance(expression.args[0], ast.Constant)
+            and expression.args[0].value == "i"
+        ):
+            expression = expression.args[1]
+        values = ast.literal_eval(expression)
     except (SyntaxError, ValueError) as error:
         raise ValueError("ROS 2 field output is not an integer array") from error
     if not isinstance(values, list) or any(type(value) is not int for value in values):
