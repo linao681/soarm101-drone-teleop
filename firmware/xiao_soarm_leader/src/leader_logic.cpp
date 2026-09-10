@@ -14,6 +14,20 @@ void crc_byte(uint32_t& crc, uint8_t value) {
 
 }  // namespace
 
+AgentHealth AgentWatchdog::report_probe(bool reachable) {
+    if (reachable) {
+        consecutive_failures_ = 0;
+        return AgentHealth{true, false};
+    }
+    if (consecutive_failures_ < kAgentLivenessFailureLimit) {
+        ++consecutive_failures_;
+    }
+    return AgentHealth{
+        false,
+        consecutive_failures_ >= kAgentLivenessFailureLimit,
+    };
+}
+
 Controller::Controller(uint32_t initial_sequence)
     : state_(STARTING),
       bus_snapshot_{0, 0, 0},

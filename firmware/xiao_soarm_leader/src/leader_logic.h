@@ -8,6 +8,7 @@ namespace leader_logic {
 constexpr uint8_t kValidMask = 0x3f;
 constexpr uint8_t kBadReadLimit = 3;
 constexpr uint8_t kGoodReadLimit = 10;
+constexpr uint8_t kAgentLivenessFailureLimit = 3;
 
 enum State : int32_t { STARTING = 0, WAITING_AGENT = 1, READY = 2, BUS_FAULT = 3 };
 
@@ -21,6 +22,19 @@ struct Output {
     State state;
     bool publish_sample;
     uint32_t sequence;
+};
+
+struct AgentHealth {
+    bool connected;
+    bool restart_requested;
+};
+
+class AgentWatchdog {
+public:
+    AgentHealth report_probe(bool reachable);
+
+private:
+    uint8_t consecutive_failures_ = 0;
 };
 
 struct CalibrationRecord {

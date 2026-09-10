@@ -21,6 +21,7 @@ constexpr size_t LEADER_RAW_FIELD_COUNT = 11;
 constexpr size_t LEADER_STATUS_FIELD_COUNT = 13;
 constexpr uint32_t READ_PERIOD_MS = 20;
 constexpr uint32_t STATUS_PERIOD_MS = 100;
+constexpr uint32_t AGENT_LIVENESS_PERIOD_MS = 1000;
 
 rcl_publisher_t raw_state_pub;
 rcl_publisher_t status_pub;
@@ -183,7 +184,9 @@ void setup() {
     uint32_t last_read_ms = millis();
     uint32_t last_status_ms = last_read_ms;
     uint32_t last_bus_check_ms = last_read_ms;
+    uint32_t last_agent_liveness_ms = last_read_ms;
     int32_t positions[servo_bus::kJointCount] = {};
+    leader_logic::AgentWatchdog agent_watchdog;
 
     while (true) {
         const uint32_t now_ms = millis();
@@ -209,6 +212,18 @@ void setup() {
         if (static_cast<uint32_t>(now_ms - last_status_ms) >= STATUS_PERIOD_MS) {
             last_status_ms += STATUS_PERIOD_MS;
             publish_status(now_ms);
+        }
+        if (static_cast<uint32_t>(now_ms - last_agent_liveness_ms) >=
+            AGENT_LIVENESS_PERIOD_MS) {
+            last_agent_liveness_ms += AGENT_LIVENESS_PERIOD_MS;
+            const leader_logic::AgentHealth health = agent_watchdog.report_probe(
+                rmw_uros_ping_agent(10, 1) == RMW_RET_OK);
+            controller.report_agent_connected(health.connected);
+            if (health.restart_requested) {
+                Serial.println("micro-ROS Agent lost; restarting for rediscovery.");
+                delay(100);
+                ESP.restart();
+            }
         }
         delay(1);
     }
