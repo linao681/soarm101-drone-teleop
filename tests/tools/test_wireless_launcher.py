@@ -13,8 +13,8 @@ def test_wireless_launcher_exports_project_root_for_bridge_imports():
 def test_wireless_launcher_defaults_to_current_recalibrated_pair():
     launcher = (PROJECT_ROOT / "start_soarm_demo.sh").read_text()
 
-    assert 'FOLLOWER_CALIBRATION="${SOARM_FOLLOWER_CALIBRATION:-$CALIBRATION_DIR/my_follower.json}"' in launcher
-    assert 'LEADER_ID="${SOARM_LEADER_ID:-my_leader}"' in launcher
+    assert 'FOLLOWER_CALIBRATION="${SOARM_FOLLOWER_CALIBRATION:-$CALIBRATION_DIR/follower_recal.json}"' in launcher
+    assert 'LEADER_ID="${SOARM_LEADER_ID:-leader_recal}"' in launcher
 
 
 def test_wireless_launcher_waits_for_topics_before_echoing_them():

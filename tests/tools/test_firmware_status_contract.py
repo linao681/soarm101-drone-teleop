@@ -6,7 +6,7 @@ ROOT = Path(__file__).parents[2]
 MAIN_CPP = ROOT / "firmware" / "xiao_soarm" / "src" / "main.cpp"
 PLATFORMIO_INI = ROOT / "firmware" / "xiao_soarm" / "platformio.ini"
 SERVO_BUS_CPP = ROOT / "firmware" / "xiao_soarm" / "src" / "servo_bus.cpp"
-FOLLOWER_CALIBRATION = ROOT / "cali" / "my_follower.json"
+FOLLOWER_CALIBRATION = ROOT / "cali" / "follower_recal.json"
 
 
 def test_firmware_declares_status_message_and_topic():

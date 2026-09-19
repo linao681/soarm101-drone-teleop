@@ -13,7 +13,7 @@ else
 fi
 BRIDGE="$PROJECT_DIR/tools/wireless_teleoperate.py"
 CALIBRATION_DIR="$PROJECT_DIR/cali"
-FOLLOWER_CALIBRATION="${SOARM_FOLLOWER_CALIBRATION:-$CALIBRATION_DIR/my_follower.json}"
+FOLLOWER_CALIBRATION="${SOARM_FOLLOWER_CALIBRATION:-$CALIBRATION_DIR/follower_recal.json}"
 
 # These values match the WiFi transport compiled into the XIAO firmware.
 EXPECTED_WIFI_SSID="${SOARM_WIFI_SSID:-vivoX100s}"
@@ -22,7 +22,7 @@ AGENT_PORT="${SOARM_AGENT_PORT:-8888}"
 # Use the controller's stable USB identity instead of the changing ttyACM number.
 DEFAULT_LEADER_PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A4B048657-if00"
 LEADER_PORT="${SOARM_LEADER_PORT:-$DEFAULT_LEADER_PORT}"
-LEADER_ID="${SOARM_LEADER_ID:-my_leader}"
+LEADER_ID="${SOARM_LEADER_ID:-leader_recal}"
 
 AGENT_LOG_DIR="$PROJECT_DIR/logs"
 AGENT_LOG="$AGENT_LOG_DIR/micro_ros_agent.log"
