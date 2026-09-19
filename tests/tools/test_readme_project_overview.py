@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 
 ROOT = Path(__file__).parents[2]
@@ -38,6 +37,7 @@ def test_readme_records_safety_calibration_and_validation_limits():
         "舵机 EEPROM/固件快照检查",
         "重新校准后同步更新校准文件和固件",
         "短时间双无线实机遥操验证",
+        "十分钟无线耐久测试尚未执行",
         "wifi_config.h",
         "不能提交",
     ]

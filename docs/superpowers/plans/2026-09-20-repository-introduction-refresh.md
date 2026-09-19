@@ -300,7 +300,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
   tests/tools/test_readme_project_overview.py -v
 ```
 
-Expected: `3 passed`.
+Expected: `4 passed`.
 
 - [ ] **Step 5: Run all repository tool tests**
 
@@ -311,7 +311,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
   /home/linao/miniforge3/envs/lerobot_so101/bin/python -m pytest tests/tools
 ```
 
-Expected: `116 passed` (the existing 113 tests plus the 3 README contract tests).
+Expected: `117 passed` (the existing 113 tests plus the 4 README contract tests).
 
 - [ ] **Step 6: Check formatting and scan the staged README change for credential material**
 
