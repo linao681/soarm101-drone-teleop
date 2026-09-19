@@ -1,0 +1,77 @@
+{
+  "boot_session_id": 527852859,
+  "calibration_crc32": 2637611057,
+  "device_id": "E4:B3:23:C4:7D:38",
+  "duration_s": 30.0,
+  "evidence_path": "/home/linao/so101_lerobot/.worktrees/wireless-leader/logs/wireless-leader/leader-powered-2026-09-09.json",
+  "expected_calibration_crc32": 2637611057,
+  "failures": [],
+  "invalid_message_count": 0,
+  "masks": {
+    "model": 63,
+    "response": 63,
+    "torque_off": 63
+  },
+  "normalized_ranges": {
+    "elbow_flex": {
+      "max": 98.07439824945294,
+      "min": 60.612691466083135
+    },
+    "gripper": {
+      "max": 39.16238060249817,
+      "min": 7.421013960323291
+    },
+    "shoulder_lift": {
+      "max": -72.51655629139073,
+      "min": -99.66887417218543
+    },
+    "shoulder_pan": {
+      "max": 32.58003766478345,
+      "min": -14.12429378531074
+    },
+    "wrist_flex": {
+      "max": 56.59043659043658,
+      "min": 12.016632016632016
+    },
+    "wrist_roll": {
+      "max": 25.518925518925514,
+      "min": 0.952380952380949
+    }
+  },
+  "protocol_version": 1,
+  "raw_ranges": {
+    "elbow_flex": {
+      "max": 3058,
+      "min": 2630
+    },
+    "gripper": {
+      "max": 1980,
+      "min": 1548
+    },
+    "shoulder_lift": {
+      "max": 1136,
+      "min": 808
+    },
+    "shoulder_pan": {
+      "max": 2454,
+      "min": 1834
+    },
+    "wrist_flex": {
+      "max": 2562,
+      "min": 2026
+    },
+    "wrist_roll": {
+      "max": 2570,
+      "min": 2067
+    }
+  },
+  "read_error_delta": 0,
+  "rejected_sample_count": 1,
+  "result": "PASS",
+  "rssi_dbm": -40,
+  "sample_count": 1497,
+  "sample_frequency_hz": 49.86666666666667,
+  "state": "READY",
+  "timestamp_utc": "2026-09-09T17:45:59.956698+00:00",
+  "torque_error_delta": 0
+}

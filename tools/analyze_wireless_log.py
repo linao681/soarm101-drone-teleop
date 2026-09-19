@@ -14,12 +14,16 @@ except ModuleNotFoundError:
     from soarm_wireless.metrics import summarize_rows
 
 
+def analyze_csv(path: Path) -> dict[str, float | int]:
+    with path.open(newline="", encoding="utf-8") as stream:
+        return summarize_rows(csv.DictReader(stream))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_path", type=Path)
     args = parser.parse_args()
-    with args.csv_path.open(newline="", encoding="utf-8") as stream:
-        summary = summarize_rows(csv.DictReader(stream))
+    summary = analyze_csv(args.csv_path)
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
