@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).parents[2]
@@ -19,6 +20,9 @@ def test_readme_describes_current_control_modes_and_hardware():
         "./start_soarm_demo.sh --leader wireless",
         "./start_soarm_demo.sh --leader wired",
         "./start_soarm_demo.sh --leader wireless --check",
+        "NetworkManager 连接名称",
+        "SOARM_WIFI_SSID",
+        'export SOARM_WIFI_SSID="your-network-name"',
     ]
     for phrase in required:
         assert phrase in text
@@ -30,13 +34,30 @@ def test_readme_records_safety_calibration_and_validation_limits():
     required = [
         "保持最后位置",
         "移除舵机电源",
-        "校准文件与具体机械臂绑定",
-        "10 分钟无线耐久测试尚未执行",
+        "本地校准结构和范围验证",
+        "舵机 EEPROM/固件快照检查",
+        "重新校准后同步更新校准文件和固件",
+        "短时间双无线实机遥操验证",
         "wifi_config.h",
         "不能提交",
     ]
     for phrase in required:
         assert phrase in text
+
+    assert "校准文件与具体机械臂绑定" not in text
+    assert "145 秒" not in text
+    assert "19.7 Hz" not in text
+    assert "67 ms" not in text
+    assert "-46 dBm" not in text
+
+
+def test_readme_keeps_firmware_commands_in_isolated_project_directories():
+    text = README.read_text()
+
+    assert '(cd firmware/xiao_soarm && \\' in text
+    assert '(cd firmware/xiao_soarm_leader && \\' in text
+    assert "cd firmware/xiao_soarm\n" not in text
+    assert "cd firmware/xiao_soarm_leader\n" not in text
 
 
 def test_readme_is_project_focused_but_preserves_upstream_attribution():

@@ -15,7 +15,8 @@
 - Do not claim that the deferred ten-minute wireless endurance test passed.
 - Preserve and document `--leader wired` as the supported wired fallback.
 - State that stopping the application leaves the follower holding its last commanded pose; physical emergency stop means removing servo power.
-- State that calibration files are hardware-specific and must remain synchronized with firmware after recalibration or controller/arm changes.
+- State that the launcher performs local calibration structure/range validation and checks servo EEPROM/firmware snapshots; synchronize calibration files and firmware after recalibration.
+- State that the launcher compares the NetworkManager connection name with `SOARM_WIFI_SSID`, and show how to set `SOARM_WIFI_SSID` for a custom network without including a real SSID or password.
 - Do not stage or modify the user's existing untracked PDF, video, Word document, submission directory, or meeting notes.
 - Use this GitHub description exactly: `SO-ARM101 双无线主从臂遥操作与无人机搭载实验，基于 LeRobot、ROS 2、micro-ROS 和 XIAO ESP32-C3，支持热点 IP 自动发现、有线回退与断线安全恢复。`
 
@@ -37,6 +38,7 @@ Create `tests/tools/test_readme_project_overview.py` with:
 
 ```python
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).parents[2]
@@ -57,6 +59,9 @@ def test_readme_describes_current_control_modes_and_hardware():
         "./start_soarm_demo.sh --leader wireless",
         "./start_soarm_demo.sh --leader wired",
         "./start_soarm_demo.sh --leader wireless --check",
+        "NetworkManager 连接名称",
+        "SOARM_WIFI_SSID",
+        'export SOARM_WIFI_SSID="your-network-name"',
     ]
     for phrase in required:
         assert phrase in text
@@ -68,13 +73,30 @@ def test_readme_records_safety_calibration_and_validation_limits():
     required = [
         "保持最后位置",
         "移除舵机电源",
-        "校准文件与具体机械臂绑定",
-        "10 分钟无线耐久测试尚未执行",
+        "本地校准结构和范围验证",
+        "舵机 EEPROM/固件快照检查",
+        "重新校准后同步更新校准文件和固件",
+        "短时间双无线实机遥操验证",
         "wifi_config.h",
         "不能提交",
     ]
     for phrase in required:
         assert phrase in text
+
+    assert "校准文件与具体机械臂绑定" not in text
+    assert "145 秒" not in text
+    assert "19.7 Hz" not in text
+    assert "67 ms" not in text
+    assert "-46 dBm" not in text
+
+
+def test_readme_keeps_firmware_commands_in_isolated_project_directories():
+    text = README.read_text()
+
+    assert '(cd firmware/xiao_soarm && \\' in text
+    assert '(cd firmware/xiao_soarm_leader && \\' in text
+    assert "cd firmware/xiao_soarm\\n" not in text
+    assert "cd firmware/xiao_soarm_leader\\n" not in text
 
 
 def test_readme_is_project_focused_but_preserves_upstream_attribution():
@@ -175,24 +197,31 @@ cp firmware/xiao_soarm_leader/src/wifi_config.example.h \
 已被 Git 忽略，包含凭据，不能提交到公开仓库。XIAO 通过 discovery 获取电脑当前
 IP，手机热点重新分配电脑地址时不需要把固定电脑 IP 写入固件。
 
+启动器会把 NetworkManager 连接名称与 `SOARM_WIFI_SSID` 比较；使用自定义网络时，
+启动前设置连接名称对应的 SSID，例如：
+
+```bash
+export SOARM_WIFI_SSID="your-network-name"
+```
+
 ## 固件测试、编译与烧录
 
 先验证再烧录无线从臂：
 
 ```bash
-cd firmware/xiao_soarm
-pio test -e native
-pio run -e seeed_xiao_esp32c3
-pio run -e seeed_xiao_esp32c3 --target upload
+(cd firmware/xiao_soarm && \
+  pio test -e native && \
+  pio run -e seeed_xiao_esp32c3 && \
+  pio run -e seeed_xiao_esp32c3 --target upload)
 ```
 
 无线主臂：
 
 ```bash
-cd firmware/xiao_soarm_leader
-pio test -e native
-pio run -e seeed_xiao_esp32c3
-pio run -e seeed_xiao_esp32c3 --target upload
+(cd firmware/xiao_soarm_leader && \
+  pio test -e native && \
+  pio run -e seeed_xiao_esp32c3 && \
+  pio run -e seeed_xiao_esp32c3 --target upload)
 ```
 
 烧录前应确认连接的是对应 XIAO，并在接通舵机电源前完成 USB 冒烟检查。
@@ -234,8 +263,7 @@ export SOARM_PYTHON=/path/to/lerobot_so101/bin/python
 
 ## 校准与安全
 
-校准文件与具体机械臂绑定。更换机械臂、舵机控制板或重新校准后，需要同步更新
-`cali/`、从臂固件中的校准快照以及无线主臂校准 CRC；不匹配时系统会拒绝进入控制。
+启动器执行本地校准结构和范围验证、舵机 EEPROM/固件快照检查。重新校准后同步更新校准文件和固件；不匹配时系统会拒绝进入控制。
 
 启动前必须机械支撑机械臂、清空运动空间，并确保可以立即断开舵机电源。按
 `Ctrl+C` 停止程序后，从臂保持最后位置；这不是物理急停。物理紧急停止方式是
@@ -243,12 +271,8 @@ export SOARM_PYTHON=/path/to/lerobot_so101/bin/python
 
 ## 验证状态
 
-已完成协议、状态机、启动预检、无跳变握手、断线恢复、有线回退和短时间双无线
-实机遥操验证。一次约 145 秒双无线运行中，反馈约 19.7 Hz，控制链路 ACK 延迟
-P95 约 67 ms，最低 RSSI 为 -46 dBm，未记录超时、拒绝或主臂恢复事件。
-
-10 分钟无线耐久测试尚未执行，因此本仓库不声称长期耐久验证通过。完整测试顺序和
-证据要求见 [`docs/soarm_wireless_test_matrix.md`](docs/soarm_wireless_test_matrix.md)。
+已完成协议、状态机、启动预检、无跳变握手、断线恢复、有线回退和短时间双无线实机遥操验证；十分钟无线耐久测试尚未执行。完整测试顺序和证据要求见
+[`docs/soarm_wireless_test_matrix.md`](docs/soarm_wireless_test_matrix.md)。
 
 分析遥操日志：
 
